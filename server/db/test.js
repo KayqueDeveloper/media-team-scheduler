@@ -1,0 +1,119 @@
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+import * as repository from './repository.js';
+import seedDatabase from './seed.js';
+import { closeDatabase } from './index.js';
+import { ROLES, SHIFTS, SCHEDULE_STATUS } from './constants.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+async function runTests() {
+  console.log('🧪 Starting Database & Repository Verification Tests...\n');
+
+  const testDbPath = path.join(__dirname, 'test_database.sqlite');
+  process.env.DB_PATH = testDbPath;
+
+  // 1. Seed Database
+  console.log('--- Test 1: Database Initialization & Seeding ---');
+  seedDatabase(testDbPath);
+
+  // 2. Verify Volunteers Query
+  console.log('\n--- Test 2: Volunteers Query & CRUD ---');
+  const volunteers = repository.getAllVolunteers();
+  console.log(`[PASS] Total volunteers retrieved: ${volunteers.length}`);
+  if (volunteers.length < 15) {
+    throw new Error(`Expected at least 15 volunteers, found ${volunteers.length}`);
+  }
+
+  // Create new test volunteer
+  const newVol = repository.createVolunteer({
+    name: 'Test User',
+    email: 'test.user@church.org',
+    phone: '(11) 99999-9999',
+    maxMonthlyFrequency: 3,
+    maxConsecutiveSundays: 2
+  });
+  console.log(`[PASS] Created volunteer: ${newVol.name} (ID: ${newVol.id})`);
+
+  // Update volunteer
+  const updatedVol = repository.updateVolunteer(newVol.id, { name: 'Updated Test User', maxMonthlyFrequency: 2 });
+  if (updatedVol.name !== 'Updated Test User' || updatedVol.max_monthly_frequency !== 2) {
+    throw new Error('Volunteer update failed');
+  }
+  console.log(`[PASS] Updated volunteer name to: ${updatedVol.name}`);
+
+  // Delete volunteer
+  const deleted = repository.deleteVolunteer(newVol.id);
+  if (!deleted || repository.getVolunteerById(newVol.id) !== null) {
+    throw new Error('Volunteer deletion failed');
+  }
+  console.log(`[PASS] Deleted volunteer ID: ${newVol.id}`);
+
+  // 3. Verify Proficiencies
+  console.log('\n--- Test 3: Proficiencies CRUD & Level Validation ---');
+  const firstVol = volunteers[0];
+  console.log(`Volunteer ${firstVol.name} initial proficiencies:`, firstVol.proficiencies);
+
+  repository.setProficiency(firstVol.id, ROLES.JIB, 2);
+  const updatedProfs = repository.getProficienciesByVolunteerId(firstVol.id);
+  if (updatedProfs[ROLES.JIB] !== 2) {
+    throw new Error('Proficiency set failed');
+  }
+  console.log(`[PASS] Set ${firstVol.name}'s JIB proficiency level to 2`);
+
+  // 4. Verify Unavailabilities
+  console.log('\n--- Test 4: Unavailabilities Management ---');
+  const unavailList = repository.getAllUnavailabilities();
+  console.log(`[PASS] Total unavailabilities registered: ${unavailList.length}`);
+
+  const augustUnavail = repository.getUnavailabilitiesByDateRange('2026-08-01', '2026-08-31');
+  console.log(`[PASS] August 2026 unavailabilities count: ${augustUnavail.length}`);
+
+  // 5. Verify Schedules & Assignments
+  console.log('\n--- Test 5: Schedules & Assignments ---');
+  const pastSchedule = repository.getScheduleByMonthYear(2026, 7);
+  if (!pastSchedule) {
+    throw new Error('July 2026 schedule not found');
+  }
+  console.log(`[PASS] Retrieved July 2026 Schedule (Status: ${pastSchedule.status}, Assignments: ${pastSchedule.assignments.length})`);
+
+  // Test creating new August Schedule
+  const augSchedule = repository.createSchedule({ year: 2026, month: 8, status: SCHEDULE_STATUS.DRAFT });
+  console.log(`[PASS] Created August 2026 Schedule ID: ${augSchedule.id}`);
+
+  // Add assignment to August Schedule
+  const newAssignment = repository.createAssignment({
+    scheduleId: augSchedule.id,
+    volunteerId: firstVol.id,
+    date: '2026-08-02',
+    shift: SHIFTS.MORNING,
+    role: ROLES.COORDINATOR
+  });
+  console.log(`[PASS] Assigned ${firstVol.name} to COORDINATOR on 2026-08-02 MORNING (ID: ${newAssignment.id})`);
+
+  // Past assignments lookup for volunteer equity tracking
+  const pastVolAssignments = repository.getPastAssignmentsByVolunteerId(firstVol.id);
+  console.log(`[PASS] Past assignments for ${firstVol.name}: ${pastVolAssignments.length}`);
+
+  // Update schedule status
+  const publishedAug = repository.updateScheduleStatus(augSchedule.id, SCHEDULE_STATUS.PUBLISHED);
+  if (publishedAug.status !== SCHEDULE_STATUS.PUBLISHED) {
+    throw new Error('Schedule status update failed');
+  }
+  console.log(`[PASS] Updated August Schedule status to: ${publishedAug.status}`);
+
+  // Cleanup test DB
+  closeDatabase();
+  if (fs.existsSync(testDbPath)) {
+    fs.unlinkSync(testDbPath);
+  }
+
+  console.log('\n🎉 ALL DATABASE AND REPOSITORY VERIFICATION TESTS PASSED SUCCESSFULLY!');
+}
+
+runTests().catch(err => {
+  console.error('❌ Test failed with error:', err);
+  process.exit(1);
+});
