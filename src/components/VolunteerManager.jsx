@@ -9,13 +9,17 @@ import {
   CheckCircle2, 
   XCircle,
   Sliders,
-  UserPlus
+  UserPlus,
+  Sun,
+  Moon,
+  Clock
 } from 'lucide-react';
 
 export const VolunteerManager = ({
   volunteers,
   roles,
   onUpdateProficiency,
+  onUpdateAllowedShift,
   onAddVolunteer,
   onToggleVolunteerStatus
 }) => {
@@ -24,10 +28,11 @@ export const VolunteerManager = ({
   const [newVolName, setNewVolName] = useState('');
   const [newVolEmail, setNewVolEmail] = useState('');
   const [newVolPhone, setNewVolPhone] = useState('');
+  const [newVolShift, setNewVolShift] = useState('ALL');
 
   const filteredVolunteers = volunteers.filter(v => 
-    v.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    v.email.toLowerCase().includes(searchTerm.toLowerCase())
+    (v.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (v.email || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const handleCreateVolunteer = (e) => {
@@ -38,21 +43,23 @@ export const VolunteerManager = ({
       name: newVolName,
       email: newVolEmail || `${newVolName.toLowerCase().replace(/\s+/g, '.')}@igreja.org`,
       phone: newVolPhone || '(11) 90000-0000',
-      maxShiftsPerMonth: 4,
+      maxShiftsPerMonth: 2,
+      allowedShift: newVolShift,
       active: true,
       proficiencies: {
-        FREEHAND: 1,
-        VMIX: 1,
-        FIXED_CAM: 1,
-        SWITCHER: 1,
-        JIB: 1,
-        COORDINATOR: 1
+        FREEHAND: 0,
+        VMIX: 0,
+        FIXED_CAM: 0,
+        SWITCHER: 0,
+        JIB: 0,
+        COORDINATOR: 0
       }
     });
 
     setNewVolName('');
     setNewVolEmail('');
     setNewVolPhone('');
+    setNewVolShift('ALL');
     setIsAddModalOpen(false);
   };
 
@@ -60,8 +67,8 @@ export const VolunteerManager = ({
     <section className="manager-container glass-panel">
       <div className="manager-toolbar">
         <div>
-          <h2>Gestão de Equipe & Matriz de Proficiência</h2>
-          <p>Cadastre voluntários e ajuste o nível técnico (1 a 3) em cada uma das 6 funções de transmissão.</p>
+          <h2>Gestão de Voluntários & Matriz de Proficiência</h2>
+          <p>Cadastre voluntários, defina restrição de turnos (Manhã/Noite) e ajuste o nível técnico nas 6 funções.</p>
         </div>
 
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
@@ -107,9 +114,43 @@ export const VolunteerManager = ({
               </button>
             </div>
 
+            {/* Shift Restriction Lock Selector */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(10, 14, 26, 0.5)', padding: '0.55rem 0.75rem', borderRadius: '8px', fontSize: '0.8rem', gap: '0.5rem' }}>
+              <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Turno Permitido:</span>
+              <div style={{ display: 'flex', gap: '0.25rem' }}>
+                <button 
+                  type="button"
+                  className={`btn ${(vol.allowedShift || 'ALL') === 'ALL' ? 'btn-primary' : 'btn-outline'}`}
+                  style={{ padding: '0.2rem 0.45rem', fontSize: '0.72rem' }}
+                  onClick={() => onUpdateAllowedShift && onUpdateAllowedShift(vol.id, 'ALL')}
+                  title="Pode servir em qualquer turno"
+                >
+                  <Clock size={12} /> Ambos
+                </button>
+                <button 
+                  type="button"
+                  className={`btn ${(vol.allowedShift || 'ALL') === 'MORNING' ? 'btn-primary' : 'btn-outline'}`}
+                  style={{ padding: '0.2rem 0.45rem', fontSize: '0.72rem' }}
+                  onClick={() => onUpdateAllowedShift && onUpdateAllowedShift(vol.id, 'MORNING')}
+                  title="Travar voluntário APENAS no turno da Manhã"
+                >
+                  <Sun size={12} /> Manhã
+                </button>
+                <button 
+                  type="button"
+                  className={`btn ${(vol.allowedShift || 'ALL') === 'NIGHT' ? 'btn-primary' : 'btn-outline'}`}
+                  style={{ padding: '0.2rem 0.45rem', fontSize: '0.72rem' }}
+                  onClick={() => onUpdateAllowedShift && onUpdateAllowedShift(vol.id, 'NIGHT')}
+                  title="Travar voluntário APENAS no turno da Noite"
+                >
+                  <Moon size={12} /> Noite
+                </button>
+              </div>
+            </div>
+
             <div className="proficiencies-list">
               <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
-                Níveis de Proficiência (1: Treinando | 2: Apto | 3: Sênior):
+                Níveis de Proficiência (Clique no nível ativo para remover / N0):
               </div>
               {roles.map(role => {
                 const currentLevel = vol.proficiencies[role.id] || 0;
@@ -122,8 +163,8 @@ export const VolunteerManager = ({
                           key={lvl}
                           type="button"
                           className={`prof-star-btn ${currentLevel === lvl ? `active lvl-${lvl}` : ''}`}
-                          onClick={() => onUpdateProficiency(vol.id, role.id, lvl)}
-                          title={`Definir Nível ${lvl} para ${role.name}`}
+                          onClick={() => onUpdateProficiency(vol.id, role.id, currentLevel === lvl ? 0 : lvl)}
+                          title={currentLevel === lvl ? `Remover proficiência de ${role.name}` : `Definir Nível ${lvl} para ${role.name}`}
                         >
                           N{lvl}
                         </button>
@@ -178,6 +219,19 @@ export const VolunteerManager = ({
                   value={newVolPhone}
                   onChange={(e) => setNewVolPhone(e.target.value)}
                 />
+              </div>
+
+              <div className="form-group">
+                <label>Restrição de Turno</label>
+                <select 
+                  className="form-select"
+                  value={newVolShift}
+                  onChange={(e) => setNewVolShift(e.target.value)}
+                >
+                  <option value="ALL">Ambos os Turnos (Manhã e Noite)</option>
+                  <option value="MORNING">Apenas Turno da Manhã (09h00)</option>
+                  <option value="NIGHT">Apenas Turno da Noite (18h00)</option>
+                </select>
               </div>
 
               <div className="modal-actions">

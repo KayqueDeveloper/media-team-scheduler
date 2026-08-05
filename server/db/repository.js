@@ -9,18 +9,31 @@ export function createVolunteer(volunteerData) {
     name,
     email = null,
     phone = null,
-    maxMonthlyFrequency = 4,
+    maxMonthlyFrequency = volunteerData.maxShiftsPerMonth || 2,
     maxConsecutiveSundays = 2,
+    allowedShift = 'ALL',
     active = 1
   } = volunteerData;
 
   const stmt = db.prepare(`
-    INSERT INTO volunteers (name, email, phone, max_monthly_frequency, max_consecutive_sundays, active)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO volunteers (name, email, phone, max_monthly_frequency, max_consecutive_sundays, allowed_shift, active)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
 
-  const info = stmt.run(name, email, phone, maxMonthlyFrequency, maxConsecutiveSundays, active ? 1 : 0);
+  const info = stmt.run(name, email, phone, maxMonthlyFrequency, maxConsecutiveSundays, allowedShift, active ? 1 : 0);
   return getVolunteerById(info.lastInsertRowid);
+}
+
+function formatVolunteer(v) {
+  if (!v) return null;
+  return {
+    ...v,
+    maxMonthlyFrequency: v.max_monthly_frequency,
+    maxShiftsPerMonth: v.max_monthly_frequency,
+    maxConsecutiveSundays: v.max_consecutive_sundays,
+    allowedShift: v.allowed_shift || 'ALL',
+    active: Boolean(v.active)
+  };
 }
 
 export function getAllVolunteers({ activeOnly = false, includeProficiencies = true } = {}) {
@@ -31,7 +44,8 @@ export function getAllVolunteers({ activeOnly = false, includeProficiencies = tr
   }
   query += ` ORDER BY name ASC`;
 
-  const volunteers = db.prepare(query).all();
+  const rawVolunteers = db.prepare(query).all();
+  const volunteers = rawVolunteers.map(formatVolunteer);
 
   if (includeProficiencies && volunteers.length > 0) {
     const profStmt = db.prepare(`SELECT * FROM proficiencies WHERE volunteer_id = ?`);
@@ -49,9 +63,10 @@ export function getAllVolunteers({ activeOnly = false, includeProficiencies = tr
 
 export function getVolunteerById(id) {
   const db = getDatabase();
-  const volunteer = db.prepare(`SELECT * FROM volunteers WHERE id = ?`).get(id);
-  if (!volunteer) return null;
+  const raw = db.prepare(`SELECT * FROM volunteers WHERE id = ?`).get(id);
+  if (!raw) return null;
 
+  const volunteer = formatVolunteer(raw);
   const profs = db.prepare(`SELECT * FROM proficiencies WHERE volunteer_id = ?`).all(id);
   volunteer.proficiencies = {};
   profs.forEach(p => {
@@ -69,17 +84,18 @@ export function updateVolunteer(id, volunteerData) {
   const name = volunteerData.name !== undefined ? volunteerData.name : current.name;
   const email = volunteerData.email !== undefined ? volunteerData.email : current.email;
   const phone = volunteerData.phone !== undefined ? volunteerData.phone : current.phone;
-  const maxMonthlyFrequency = volunteerData.maxMonthlyFrequency !== undefined ? volunteerData.maxMonthlyFrequency : current.max_monthly_frequency;
+  const maxMonthlyFrequency = volunteerData.maxMonthlyFrequency !== undefined ? volunteerData.maxMonthlyFrequency : (volunteerData.maxShiftsPerMonth !== undefined ? volunteerData.maxShiftsPerMonth : current.max_monthly_frequency);
   const maxConsecutiveSundays = volunteerData.maxConsecutiveSundays !== undefined ? volunteerData.maxConsecutiveSundays : current.max_consecutive_sundays;
+  const allowedShift = volunteerData.allowedShift !== undefined ? volunteerData.allowedShift : (current.allowed_shift || 'ALL');
   const active = volunteerData.active !== undefined ? (volunteerData.active ? 1 : 0) : current.active;
 
   const stmt = db.prepare(`
     UPDATE volunteers
-    SET name = ?, email = ?, phone = ?, max_monthly_frequency = ?, max_consecutive_sundays = ?, active = ?, updated_at = CURRENT_TIMESTAMP
+    SET name = ?, email = ?, phone = ?, max_monthly_frequency = ?, max_consecutive_sundays = ?, allowed_shift = ?, active = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `);
 
-  stmt.run(name, email, phone, maxMonthlyFrequency, maxConsecutiveSundays, active, id);
+  stmt.run(name, email, phone, maxMonthlyFrequency, maxConsecutiveSundays, allowedShift, active, id);
   return getVolunteerById(id);
 }
 
@@ -257,7 +273,7 @@ export function deleteSchedule(id) {
 
 // --- Assignment Repository ---
 
-export function createAssignment({ scheduleId, volunteerId, date, shift, role }) {
+export function createAssignment({ scheduleId, volunteerId, date, shift, role, isTrainee = 0 }) {
   if (!SHIFT_LIST.includes(shift)) {
     throw new Error(`Invalid shift: ${shift}`);
   }
@@ -267,12 +283,12 @@ export function createAssignment({ scheduleId, volunteerId, date, shift, role })
 
   const db = getDatabase();
   const stmt = db.prepare(`
-    INSERT INTO assignments (schedule_id, volunteer_id, date, shift, role)
-    VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT(date, shift, role) DO UPDATE SET volunteer_id = excluded.volunteer_id, schedule_id = excluded.schedule_id
+    INSERT INTO assignments (schedule_id, volunteer_id, date, shift, role, is_trainee)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(date, shift, role, is_trainee) DO UPDATE SET volunteer_id = excluded.volunteer_id, schedule_id = excluded.schedule_id
   `);
 
-  const info = stmt.run(scheduleId, volunteerId, date, shift, role);
+  const info = stmt.run(scheduleId, volunteerId, date, shift, role, isTrainee ? 1 : 0);
   return db.prepare(`SELECT * FROM assignments WHERE id = ?`).get(info.lastInsertRowid || info.lastID);
 }
 

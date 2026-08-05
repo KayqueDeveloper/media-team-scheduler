@@ -1,4 +1,5 @@
 import html2pdf from 'html2pdf.js';
+import { getSlotAssignment } from './scheduleUtils.js';
 
 /**
  * Downloads the given element HTML as a formatted PDF file using html2pdf.js
@@ -44,17 +45,19 @@ export const generateWhatsAppText = (schedule, volunteersMap, sundays, roles, mo
     // Manhã
     text += `\n*Turno Manhã (09h00):*\n`;
     roles.forEach(role => {
-      const volId = schedule[sunday.date]?.manha?.[role.id];
+      const { main: volId, trainee: traineeId } = getSlotAssignment(schedule, sunday.date, 'MORNING', role.id);
       const volName = volId ? (volunteersMap[volId]?.name || 'Não alocado') : 'Vago';
-      text += `- ${role.name}: *${volName}*\n`;
+      const traineeStr = traineeId ? ` _(Treino: ${volunteersMap[traineeId]?.name || traineeId})_` : '';
+      text += `- ${role.name}: *${volName}*${traineeStr}\n`;
     });
 
     // Noite
     text += `\n*Turno Noite (18h00):*\n`;
     roles.forEach(role => {
-      const volId = schedule[sunday.date]?.noite?.[role.id];
+      const { main: volId, trainee: traineeId } = getSlotAssignment(schedule, sunday.date, 'NIGHT', role.id);
       const volName = volId ? (volunteersMap[volId]?.name || 'Não alocado') : 'Vago';
-      text += `- ${role.name}: *${volName}*\n`;
+      const traineeStr = traineeId ? ` _(Treino: ${volunteersMap[traineeId]?.name || traineeId})_` : '';
+      text += `- ${role.name}: *${volName}*${traineeStr}\n`;
     });
 
     text += `\n------------------------------------\n`;

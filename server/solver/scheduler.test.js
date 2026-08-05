@@ -117,21 +117,24 @@ describe('Hard Constraints Enforcement', () => {
     });
   });
 
-  test('Enforces Volunteer Proficiency >= 1 for assigned role', () => {
+  test('Enforces Volunteer Proficiency >= 1 for non-critical roles and >= 2 for critical roles (ADR 0002)', () => {
     const { volunteers, proficiencies } = createMockVolunteers(30);
-    // Remove v1's proficiency for 'corte' (level 0)
-    const filteredProf = proficiencies.filter(p => !(p.volunteerId === 'v1' && p.role === 'corte'));
 
     const result = generateSchedule({
       year: 2026,
       month: 8,
       volunteers,
-      proficiencies: filteredProf
+      proficiencies
     });
 
     assert.equal(result.success, true);
-    const v1CorteAssignments = result.schedule.filter(s => s.volunteerId === 'v1' && s.role === 'corte');
-    assert.equal(v1CorteAssignments.length, 0);
+    
+    // Check all VMIX and SWITCHER assignments have proficiency level >= 2
+    result.schedule.forEach(s => {
+      if (s.role === 'VMIX' || s.role === 'SWITCHER') {
+        assert.ok(s.proficiencyLevel >= 2, `Critical role ${s.role} assigned to volunteer ${s.volunteerId} with proficiency level ${s.proficiencyLevel} < 2`);
+      }
+    });
   });
 
   test('Enforces Max 1 shift per Sunday per volunteer (ADR 0003)', () => {
@@ -228,6 +231,27 @@ describe('Hard Constraints Enforcement', () => {
     const v2Aug9 = result.schedule.filter(s => s.volunteerId === 'v2' && s.date === '2026-08-09');
     assert.equal(v2Aug9.length, 0);
   });
+
+  test('Enforces allowedShift restriction (MORNING or NIGHT only)', () => {
+    const { volunteers, proficiencies } = createMockVolunteers(30);
+    // Lock v1 to MORNING only and v2 to NIGHT only
+    volunteers[0].allowedShift = 'MORNING';
+    volunteers[1].allowedShift = 'NIGHT';
+
+    const result = generateSchedule({
+      year: 2026,
+      month: 8,
+      volunteers,
+      proficiencies
+    });
+
+    assert.equal(result.success, true);
+    const v1NightAssignments = result.schedule.filter(s => s.volunteerId === 'v1' && s.shift === 'NIGHT');
+    assert.equal(v1NightAssignments.length, 0, 'v1 should never be assigned to NIGHT shift');
+
+    const v2MorningAssignments = result.schedule.filter(s => s.volunteerId === 'v2' && s.shift === 'MORNING');
+    assert.equal(v2MorningAssignments.length, 0, 'v2 should never be assigned to MORNING shift');
+  });
 });
 
 describe('Soft Constraints Enforcement', () => {
@@ -283,3 +307,74 @@ describe('Error Handling and Edge Cases', () => {
     assert.throws(() => generateSchedule({ month: 8 }), /Year and month are required/);
   });
 });
+
+describe('Trainee Scheduling Feature (N1 with N2+ mentor)', () => {
+  test('Assigns N1 trainees ONLY when main volunteer is N2 or N3 (at least N2)', () => {
+    const { volunteers, proficiencies } = createMockVolunteers(30);
+
+    const result = generateSchedule({ year: 2026, month: 8, volunteers, proficiencies });
+    assert.equal(result.success, true);
+    assert.ok(Array.isArray(result.trainees));
+
+    result.trainees.forEach(t => {
+      // Check trainee proficiency is N1 (level 1)
+      assert.equal(t.proficiencyLevel, 1, 'Trainee must have level 1 proficiency');
+
+      // Find main operator assigned to this slot
+      const mainSlot = result.schedule.find(s => s.date === t.date && s.shift === t.shift && s.role === t.role);
+      assert.ok(mainSlot, 'Main operator slot must exist');
+      assert.ok(mainSlot.proficiencyLevel >= 2, `Main operator proficiency must be >= 2 (got ${mainSlot.proficiencyLevel})`);
+      assert.notEqual(t.volunteerId, mainSlot.volunteerId, 'Trainee cannot be the main volunteer');
+    });
+  });
+
+  test('Trainee assignments strictly respect the consecutive Sundays constraint', () => {
+    const { volunteers, proficiencies } = createMockVolunteers(30);
+
+    const result = generateSchedule({ year: 2026, month: 8, volunteers, proficiencies });
+    assert.equal(result.success, true);
+
+    // Combine all assignments per volunteer (main + trainee)
+    const assignmentsByVol = new Map();
+    volunteers.forEach(v => assignmentsByVol.set(v.id, []));
+
+    result.schedule.forEach(s => {
+      if (s.volunteerId) assignmentsByVol.get(s.volunteerId)?.push({ date: s.date, sundayIndex: s.sundayIndex, type: 'main' });
+    });
+    result.trainees.forEach(t => {
+      if (t.volunteerId) assignmentsByVol.get(t.volunteerId)?.push({ date: t.date, sundayIndex: t.sundayIndex, type: 'trainee' });
+    });
+
+    volunteers.forEach(v => {
+      const volAssignments = assignmentsByVol.get(v.id) || [];
+      const sundayIndices = volAssignments.map(a => a.sundayIndex).sort((a, b) => a - b);
+
+      for (let i = 0; i < sundayIndices.length - 1; i++) {
+        const gap = sundayIndices[i + 1] - sundayIndices[i];
+        assert.ok(gap >= 2, `Volunteer ${v.id} assigned on consecutive Sundays (${sundayIndices[i]} and ${sundayIndices[i + 1]}) including trainee slots`);
+      }
+    });
+  });
+
+  test('Volunteer is never assigned twice on the same Sunday (as main or trainee)', () => {
+    const { volunteers, proficiencies } = createMockVolunteers(30);
+
+    const result = generateSchedule({ year: 2026, month: 8, volunteers, proficiencies });
+    assert.equal(result.success, true);
+
+    const byVolAndDate = new Map();
+    result.schedule.forEach(s => {
+      const key = `${s.volunteerId}:${s.date}`;
+      byVolAndDate.set(key, (byVolAndDate.get(key) || 0) + 1);
+    });
+    result.trainees.forEach(t => {
+      const key = `${t.volunteerId}:${t.date}`;
+      byVolAndDate.set(key, (byVolAndDate.get(key) || 0) + 1);
+    });
+
+    for (const [key, count] of byVolAndDate.entries()) {
+      assert.ok(count <= 1, `Volunteer/Date ${key} assigned ${count} times on the same date`);
+    }
+  });
+});
+

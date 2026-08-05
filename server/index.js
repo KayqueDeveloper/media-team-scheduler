@@ -111,18 +111,27 @@ app.post('/api/schedule/generate', (req, res) => {
     const currentMonthStart = new Date(year, month - 1, 1).toISOString().split('T')[0];
     const pastAssignments = getAssignmentsByDateRange(pastStartDate, currentMonthStart);
 
+    const proficiencies = [];
+    volunteers.forEach(v => {
+      if (v.proficiencies) {
+        Object.entries(v.proficiencies).forEach(([role, level]) => {
+          if (level > 0) proficiencies.push({ volunteerId: v.id, role, level });
+        });
+      }
+    });
+
     // Invoke Constraint Solver Engine
     const result = generateSchedule({
       year,
       month,
       volunteers,
-      proficiencies: {}, // included in volunteer objects
+      proficiencies,
       unavailabilities,
       pastAssignments
     });
 
-    if (!result.success && result.assignments.length === 0) {
-      return res.status(422).json({ error: result.reason || 'Could not generate schedule matching constraints.' });
+    if (!result.success || !result.schedule) {
+      return res.status(422).json({ error: result.errors?.[0] || 'Could not generate schedule matching constraints.' });
     }
 
     // Persist to SQLite
@@ -133,19 +142,36 @@ app.post('/api/schedule/generate', (req, res) => {
       clearScheduleAssignments(schedule.id);
     }
 
-    const assignmentsToInsert = result.assignments.map(a => ({
-      scheduleId: schedule.id,
-      volunteerId: a.volunteerId,
-      date: a.date,
-      shift: a.shift,
-      role: a.role
-    }));
+    const assignmentsToInsert = [];
+    result.schedule.forEach(a => {
+      assignmentsToInsert.push({
+        scheduleId: schedule.id,
+        volunteerId: a.volunteerId,
+        date: a.date,
+        shift: a.shift,
+        role: a.role,
+        isTrainee: 0
+      });
+    });
+    if (result.trainees) {
+      result.trainees.forEach(t => {
+        assignmentsToInsert.push({
+          scheduleId: schedule.id,
+          volunteerId: t.volunteerId,
+          date: t.date,
+          shift: t.shift,
+          role: t.role,
+          isTrainee: 1
+        });
+      });
+    }
 
     bulkCreateAssignments(assignmentsToInsert);
 
     const updatedSchedule = getScheduleByMonthYear(year, month);
     res.json({
       schedule: updatedSchedule,
+      bySunday: result.bySunday,
       warnings: result.warnings || []
     });
   } catch (error) {

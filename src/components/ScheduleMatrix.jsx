@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { getSlotAssignment } from '../utils/scheduleUtils';
 import { 
   Calendar, 
   Sun, 
@@ -11,7 +12,11 @@ import {
   Sliders, 
   Maximize2,
   Table,
-  LayoutGrid
+  LayoutGrid,
+  Sparkles,
+  Lock,
+  Unlock,
+  GraduationCap
 } from 'lucide-react';
 
 export const ScheduleMatrix = ({
@@ -21,7 +26,10 @@ export const ScheduleMatrix = ({
   volunteers,
   schedule,
   unavailabilities,
-  onScheduleChange
+  lockedSlots = [],
+  onScheduleChange,
+  onGenerateAuto,
+  onToggleLockSlot
 }) => {
   const [viewMode, setViewMode] = useState('table'); // 'table' (Official PDF style) | 'grid' (Interactive Cards)
 
@@ -48,28 +56,41 @@ export const ScheduleMatrix = ({
   // Helper to check if a volunteer has an unavailability on a date/shift
   const isUnavailable = (volunteerId, date, shiftId) => {
     if (!volunteerId) return false;
+    const vIdStr = String(volunteerId);
     return unavailabilities.some(
-      u => u.volunteerId === volunteerId && u.date === date && (u.shift === shiftId || u.shift === 'ALL')
+      u => String(u.volunteerId) === vIdStr && u.date === date && (u.shift === shiftId || u.shift === 'ALL')
     );
   };
 
   // Helper to check if a volunteer is double-booked on same Sunday
   const isDoubleBooked = (volunteerId, date, currentShiftId) => {
     if (!volunteerId) return false;
+    const vIdStr = String(volunteerId);
     const otherShiftId = currentShiftId === 'MORNING' ? 'NIGHT' : 'MORNING';
-    const otherAllocations = Object.values(schedule[date]?.[otherShiftId] || {});
-    return otherAllocations.includes(volunteerId);
+    const otherAllocations = Object.values(schedule[date]?.[otherShiftId] || {}).flatMap(item => {
+      const slot = typeof item === 'object' ? item : { main: item, trainee: '' };
+      return [slot.main, slot.trainee];
+    });
+    return otherAllocations.some(id => String(id) === vIdStr);
   };
 
   return (
     <section className="matrix-container glass-panel">
       <div className="matrix-header-info">
         <div className="matrix-title">
-          <h2>Matriz de Alocação Mensal</h2>
-          <p>Grade de Cultos Dominicais × Turnos × 6 Funções de Transmissão</p>
+          <h2>Matriz da Escala Mensal</h2>
+          <p>Escala de Cultos Dominicais × Turnos × 6 Funções de Transmissão (com Treinamento N1 & Ops N2+)</p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+          {/* Action button inside Matrix header */}
+          {onGenerateAuto && (
+            <button className="btn btn-secondary" onClick={onGenerateAuto} title="Preencher ou recalcular vagas e treinandos N1 via algoritmo IA">
+              <Sparkles size={16} />
+              Gerar Escala (IA)
+            </button>
+          )}
+
           {/* Mode Switcher Buttons */}
           <div style={{ display: 'flex', background: 'rgba(15, 23, 42, 0.6)', padding: '4px', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
             <button 
@@ -93,9 +114,9 @@ export const ScheduleMatrix = ({
           {viewMode === 'grid' && (
             <div className="matrix-legend">
               <span>Proficiência:</span>
-              <div className="legend-item"><span className="legend-badge level-1"></span>N1</div>
-              <div className="legend-item"><span className="legend-badge level-2"></span>N2</div>
-              <div className="legend-item"><span className="legend-badge level-3"></span>N3</div>
+              <div className="legend-item"><span className="legend-badge level-1"></span>N1 (Treinando)</div>
+              <div className="legend-item"><span className="legend-badge level-2"></span>N2 (Apto)</div>
+              <div className="legend-item"><span className="legend-badge level-3"></span>N3 (Sênior)</div>
             </div>
           )}
         </div>
@@ -121,109 +142,113 @@ export const ScheduleMatrix = ({
               {sundays.map((sunday, idx) => {
                 const shortDate = sunday.formatted.slice(0, 5);
 
+                const shiftList = [
+                  { id: 'MORNING', label: 'MANHÃ' },
+                  { id: 'NIGHT', label: 'NOITE' }
+                ];
+
                 return (
                   <React.Fragment key={sunday.date}>
-                    {/* Morning Row */}
-                    <tr>
-                      <td className="td-date-shift">{shortDate} - MANHÃ</td>
-                      {roles.map(role => {
-                        const currentVolId = schedule[sunday.date]?.['MORNING']?.[role.id] || '';
-                        const volObj = volunteersMap[currentVolId];
-                        const profLevel = volObj ? (volObj.proficiencies[role.id] || 0) : 0;
-                        const unavailable = isUnavailable(currentVolId, sunday.date, 'MORNING');
-                        const doubleBooked = isDoubleBooked(currentVolId, sunday.date, 'MORNING');
+                    {shiftList.map(shiftItem => (
+                      <tr key={shiftItem.id}>
+                        <td className="td-date-shift">{shortDate} - {shiftItem.label}</td>
+                        {roles.map(role => {
+                          const { main: currentVolId, trainee: currentTraineeId } = getSlotAssignment(schedule, sunday.date, shiftItem.id, role.id);
+                          const volObj = volunteersMap[currentVolId];
+                          const profLevel = volObj ? (volObj.proficiencies[role.id] || 0) : 0;
 
-                        return (
-                          <td key={role.id} className={`td-volunteer-cell ${(unavailable || doubleBooked) ? 'has-conflict' : ''}`}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', width: '100%' }}>
-                              <select
-                                className="volunteer-select-table"
-                                value={currentVolId}
-                                onChange={(e) => onScheduleChange(sunday.date, 'MORNING', role.id, e.target.value)}
-                              >
-                                <option value="">-- Vago --</option>
-                                {volunteers.map(v => {
-                                  const vUnavail = isUnavailable(v.id, sunday.date, 'MORNING');
-                                  const vLevel = v.proficiencies[role.id] || 0;
-                                  return (
-                                    <option key={v.id} value={v.id}>
-                                      {v.name} (N{vLevel}){vUnavail ? ' ⚠️ (Indisponível)' : ''}
-                                    </option>
-                                  );
-                                })}
-                              </select>
+                          const traineeObj = volunteersMap[currentTraineeId];
+                          const canHaveTrainee = profLevel >= 2;
 
-                              {profLevel > 0 && (
-                                <span className={`proficiency-pill level-${profLevel}`} style={{ fontSize: '0.65rem', padding: '0.1rem 0.3rem' }}>
-                                  N{profLevel}
-                                </span>
-                              )}
+                          const mainUnavailable = isUnavailable(currentVolId, sunday.date, shiftItem.id);
+                          const mainDoubleBooked = isDoubleBooked(currentVolId, sunday.date, shiftItem.id);
+                          const traineeUnavailable = isUnavailable(currentTraineeId, sunday.date, shiftItem.id);
 
-                              {(unavailable || doubleBooked) && (
-                                <div className="conflict-warning" style={{ flexShrink: 0 }} title={
-                                  unavailable 
-                                    ? 'Atenção: Voluntário possui indisponibilidade nesta data/turno!' 
-                                    : 'Atenção: Voluntário alocado nos dois turnos do mesmo domingo!'
-                                }>
-                                  <AlertTriangle size={15} />
+                          const slotKey = `${sunday.date}:${shiftItem.id}:${role.id}`;
+                          const isLocked = lockedSlots.includes(slotKey);
+
+                          return (
+                            <td key={role.id} className={`td-volunteer-cell ${(mainUnavailable || mainDoubleBooked || traineeUnavailable) ? 'has-conflict' : ''}`}>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', width: '100%' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', width: '100%' }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => onToggleLockSlot && onToggleLockSlot(sunday.date, shiftItem.id, role.id)}
+                                    style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: isLocked ? 'var(--accent-amber)' : 'var(--text-dim)', padding: '2px 4px' }}
+                                    title={isLocked ? 'Vaga travada (fixa durante a geração automática)' : 'Vaga livre (clique para travar)'}
+                                  >
+                                    {isLocked ? <Lock size={14} /> : <Unlock size={14} />}
+                                  </button>
+
+                                  <select
+                                    className="volunteer-select-table"
+                                    value={currentVolId}
+                                    onChange={(e) => onScheduleChange(sunday.date, shiftItem.id, role.id, e.target.value, 'main')}
+                                  >
+                                    <option value="">-- Vago --</option>
+                                    {volunteers.map(v => {
+                                      const vUnavail = isUnavailable(v.id, sunday.date, shiftItem.id);
+                                      const vLevel = v.proficiencies[role.id] || 0;
+                                      return (
+                                        <option key={v.id} value={v.id}>
+                                          {v.name} (N{vLevel}){vUnavail ? ' ⚠️ (Indisponível)' : ''}
+                                        </option>
+                                      );
+                                    })}
+                                  </select>
+
+                                  {profLevel > 0 && (
+                                    <span className={`proficiency-pill level-${profLevel}`} style={{ fontSize: '0.65rem', padding: '0.1rem 0.3rem' }}>
+                                      N{profLevel}
+                                    </span>
+                                  )}
+
+                                  {(mainUnavailable || mainDoubleBooked) && (
+                                    <div className="conflict-warning" style={{ flexShrink: 0 }} title={
+                                      mainUnavailable 
+                                        ? 'Atenção: Voluntário possui indisponibilidade nesta data/turno!' 
+                                        : 'Atenção: Voluntário escalado nos dois turnos do mesmo domingo!'
+                                    }>
+                                      <AlertTriangle size={15} />
+                                    </div>
+                                  )}
                                 </div>
-                              )}
-                            </div>
-                          </td>
-                        );
-                      })}
-                    </tr>
 
-                    {/* Night Row */}
-                    <tr>
-                      <td className="td-date-shift">{shortDate} - NOITE</td>
-                      {roles.map(role => {
-                        const currentVolId = schedule[sunday.date]?.['NIGHT']?.[role.id] || '';
-                        const volObj = volunteersMap[currentVolId];
-                        const profLevel = volObj ? (volObj.proficiencies[role.id] || 0) : 0;
-                        const unavailable = isUnavailable(currentVolId, sunday.date, 'NIGHT');
-                        const doubleBooked = isDoubleBooked(currentVolId, sunday.date, 'NIGHT');
-
-                        return (
-                          <td key={role.id} className={`td-volunteer-cell ${(unavailable || doubleBooked) ? 'has-conflict' : ''}`}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', width: '100%' }}>
-                              <select
-                                className="volunteer-select-table"
-                                value={currentVolId}
-                                onChange={(e) => onScheduleChange(sunday.date, 'NIGHT', role.id, e.target.value)}
-                              >
-                                <option value="">-- Vago --</option>
-                                {volunteers.map(v => {
-                                  const vUnavail = isUnavailable(v.id, sunday.date, 'NIGHT');
-                                  const vLevel = v.proficiencies[role.id] || 0;
-                                  return (
-                                    <option key={v.id} value={v.id}>
-                                      {v.name} (N{vLevel}){vUnavail ? ' ⚠️ (Indisponível)' : ''}
-                                    </option>
-                                  );
-                                })}
-                              </select>
-
-                              {profLevel > 0 && (
-                                <span className={`proficiency-pill level-${profLevel}`} style={{ fontSize: '0.65rem', padding: '0.1rem 0.3rem' }}>
-                                  N{profLevel}
-                                </span>
-                              )}
-
-                              {(unavailable || doubleBooked) && (
-                                <div className="conflict-warning" style={{ flexShrink: 0 }} title={
-                                  unavailable 
-                                    ? 'Atenção: Voluntário possui indisponibilidade nesta data/turno!' 
-                                    : 'Atenção: Voluntário alocado nos dois turnos do mesmo domingo!'
-                                }>
-                                  <AlertTriangle size={15} />
+                                {/* Trainee Select Row */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                  <GraduationCap size={13} style={{ color: canHaveTrainee ? '#38bdf8' : 'var(--text-dim)' }} />
+                                  <select
+                                    className="volunteer-select-table"
+                                    style={{
+                                      fontSize: '0.72rem',
+                                      padding: '0.15rem 0.3rem',
+                                      borderColor: currentTraineeId ? '#38bdf8' : 'rgba(255,255,255,0.1)',
+                                      background: currentTraineeId ? 'rgba(56, 189, 248, 0.1)' : undefined
+                                    }}
+                                    value={currentTraineeId}
+                                    disabled={!canHaveTrainee && !currentVolId}
+                                    onChange={(e) => onScheduleChange(sunday.date, shiftItem.id, role.id, e.target.value, 'trainee')}
+                                    title={canHaveTrainee ? 'Selecione um voluntário N1 para treinar' : 'Treinamento requer operador principal N2 ou N3'}
+                                  >
+                                    <option value="">-- {canHaveTrainee ? 'Sem Treinando' : 'Requer Op N2+'} --</option>
+                                    {volunteers.map(v => {
+                                      if (v.id === currentVolId) return null;
+                                      const vLevel = v.proficiencies[role.id] || 0;
+                                      const vUnavail = isUnavailable(v.id, sunday.date, shiftItem.id);
+                                      return (
+                                        <option key={v.id} value={v.id}>
+                                          🎓 {v.name} (N{vLevel}){vLevel === 1 ? ' [Treinando]' : ''}{vUnavail ? ' ⚠️' : ''}
+                                        </option>
+                                      );
+                                    })}
+                                  </select>
                                 </div>
-                              )}
-                            </div>
-                          </td>
-                        );
-                      })}
-                    </tr>
+                              </div>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
 
                     {/* Separator */}
                     {idx < sundays.length - 1 && (
@@ -264,45 +289,88 @@ export const ScheduleMatrix = ({
 
                     <div className="roles-list">
                       {roles.map(role => {
-                        const currentVolId = schedule[sunday.date]?.[shift.id]?.[role.id] || '';
+                        const { main: currentVolId, trainee: currentTraineeId } = getSlotAssignment(schedule, sunday.date, shift.id, role.id);
                         const volObj = volunteersMap[currentVolId];
                         const profLevel = volObj ? (volObj.proficiencies[role.id] || 0) : 0;
+                        const canHaveTrainee = profLevel >= 2;
                         
-                        const unavailable = isUnavailable(currentVolId, sunday.date, shift.id);
-                        const doubleBooked = isDoubleBooked(currentVolId, sunday.date, shift.id);
+                        const mainUnavailable = isUnavailable(currentVolId, sunday.date, shift.id);
+                        const mainDoubleBooked = isDoubleBooked(currentVolId, sunday.date, shift.id);
+                        const traineeUnavailable = isUnavailable(currentTraineeId, sunday.date, shift.id);
+
+                        const slotKey = `${sunday.date}:${shift.id}:${role.id}`;
+                        const isLocked = lockedSlots.includes(slotKey);
 
                         return (
-                          <div key={role.id} className="role-slot">
-                            <div className="role-info">
-                              {getRoleIcon(role.id)}
-                              <span className="role-name">{role.shortName}</span>
+                          <div key={role.id} className="role-slot" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '0.4rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <div className="role-info">
+                                <button
+                                  type="button"
+                                  onClick={() => onToggleLockSlot && onToggleLockSlot(sunday.date, shift.id, role.id)}
+                                  style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: isLocked ? 'var(--accent-amber)' : 'var(--text-dim)', padding: 0 }}
+                                  title={isLocked ? 'Vaga travada (fixa durante a geração automática)' : 'Vaga livre (clique para travar)'}
+                                >
+                                  {isLocked ? <Lock size={14} /> : <Unlock size={14} />}
+                                </button>
+                                {getRoleIcon(role.id)}
+                                <span className="role-name">{role.shortName}</span>
+                              </div>
+
+                              {profLevel > 0 && (
+                                <span className={`proficiency-pill level-${profLevel}`}>
+                                  Op N{profLevel}
+                                </span>
+                              )}
                             </div>
 
+                            {/* Main Operator Select */}
                             <div className="volunteer-select-container">
                               <select
                                 className="volunteer-select"
                                 value={currentVolId}
-                                onChange={(e) => onScheduleChange(sunday.date, shift.id, role.id, e.target.value)}
+                                onChange={(e) => onScheduleChange(sunday.date, shift.id, role.id, e.target.value, 'main')}
                               >
-                                <option value="">-- Selecionar --</option>
+                                <option value="">-- Selecionar Operador --</option>
                                 {volunteers.map(v => (
                                   <option key={v.id} value={v.id}>
                                     {v.name} (Nível {v.proficiencies[role.id] || 0})
                                   </option>
                                 ))}
                               </select>
+                            </div>
 
-                              {profLevel > 0 && (
-                                <span className={`proficiency-pill level-${profLevel}`}>
-                                  N{profLevel}
-                                </span>
-                              )}
+                            {/* Trainee Select */}
+                            <div className="volunteer-select-container" style={{ gap: '0.4rem' }}>
+                              <GraduationCap size={15} style={{ color: canHaveTrainee ? '#38bdf8' : 'var(--text-dim)', flexShrink: 0 }} />
+                              <select
+                                className="volunteer-select"
+                                style={{
+                                  borderColor: currentTraineeId ? '#38bdf8' : 'rgba(255,255,255,0.1)',
+                                  background: currentTraineeId ? 'rgba(56, 189, 248, 0.1)' : undefined,
+                                  fontSize: '0.8rem'
+                                }}
+                                value={currentTraineeId}
+                                disabled={!canHaveTrainee && !currentVolId}
+                                onChange={(e) => onScheduleChange(sunday.date, shift.id, role.id, e.target.value, 'trainee')}
+                              >
+                                <option value="">-- {canHaveTrainee ? 'Selecionar Treinando (N1)' : 'Requer Op N2+ para treino'} --</option>
+                                {volunteers.map(v => {
+                                  if (v.id === currentVolId) return null;
+                                  const vLevel = v.proficiencies[role.id] || 0;
+                                  return (
+                                    <option key={v.id} value={v.id}>
+                                      🎓 {v.name} (Nível {vLevel}){vLevel === 1 ? ' ★ Treinando' : ''}
+                                    </option>
+                                  );
+                                })}
+                              </select>
                             </div>
 
                             {/* Rule Violations / Warnings */}
-                            {(unavailable || doubleBooked) && (
+                            {(mainUnavailable || mainDoubleBooked || traineeUnavailable) && (
                               <div className="conflict-warning" title={
-                                unavailable 
+                                mainUnavailable || traineeUnavailable
                                   ? 'Voluntário com indisponibilidade registrada!' 
                                   : 'Atenção: Voluntário alocado nos dois turnos do mesmo domingo!'
                               }>
@@ -323,3 +391,4 @@ export const ScheduleMatrix = ({
     </section>
   );
 };
+

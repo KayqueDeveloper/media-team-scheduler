@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Production build
+dist/
+
+# Database & local data
+server/db/database.sqlite
+*.sqlite
+*.sqlite-journal
+
+# Environment variables
+.env
+.env.local
+
+# System & logs
+*.log
+.DS_Store

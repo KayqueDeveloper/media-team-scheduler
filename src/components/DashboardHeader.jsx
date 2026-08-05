@@ -83,7 +83,7 @@ export const DashboardHeader = ({
 
           <button className="btn btn-primary" onClick={onOpenPdfModal}>
             <Download size={16} />
-            Exportar PDF / Whats
+            Exportação PDF
           </button>
         </div>
       </div>

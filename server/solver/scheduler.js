@@ -57,7 +57,10 @@ export function generateSchedule({
   unavailabilities = [],
   pastAssignments = [],
   roles = DEFAULT_ROLES,
-  shifts = DEFAULT_SHIFTS
+  shifts = DEFAULT_SHIFTS,
+  lockedAssignments = [],
+  allowConsecutiveSundays = false,
+  force = false
 }) {
   if (!year || !month) {
     throw new Error('Year and month are required parameters.');
@@ -75,11 +78,12 @@ export function generateSchedule({
   // Normalize volunteers
   const normalizedVolunteers = volunteers.map(v => {
     if (typeof v === 'string' || typeof v === 'number') {
-      return { id: String(v), name: String(v) };
+      return { id: String(v), name: String(v), allowedShift: 'ALL' };
     }
     const id = String(v.id || v.volunteerId || v.volunteer_id);
     const name = v.name || id;
-    return { id, name };
+    const allowedShift = v.allowedShift || v.preferredShift || (v.shifts && v.shifts.length === 1 ? v.shifts[0] : 'ALL');
+    return { id, name, allowedShift };
   });
 
   if (normalizedVolunteers.length === 0) {
@@ -101,6 +105,16 @@ export function generateSchedule({
   const profMap = new Map();
   normalizedVolunteers.forEach(v => profMap.set(v.id, new Map()));
 
+  // Populate from embedded volunteer proficiencies
+  volunteers.forEach(v => {
+    const vId = String(v.id || v.volunteerId || v.volunteer_id || '');
+    if (v.proficiencies && typeof v.proficiencies === 'object' && profMap.has(vId)) {
+      Object.entries(v.proficiencies).forEach(([r, lvl]) => {
+        profMap.get(vId).set(String(r).toUpperCase(), Number(lvl));
+      });
+    }
+  });
+
   if (Array.isArray(proficiencies)) {
     proficiencies.forEach(p => {
       const vId = String(p.volunteerId || p.volunteer_id || p.vId || '');
@@ -120,6 +134,8 @@ export function generateSchedule({
       }
     });
   }
+
+  const getProficiencyLevel = (vId, role) => profMap.get(vId)?.get(role) || 0;
 
   // Normalize unavailabilities: Set of "vId:date" or "vId:date:shift"
   const unavailSet = new Set();
@@ -181,33 +197,59 @@ export function generateSchedule({
 
   const totalSlots = slots.length;
 
-  // Run solver with strict seniority check first, then fallback without strict seniority requirement
-  let solution = runSolver(true);
+  let solution = null;
   let strictSeniorityAchieved = true;
+  let consecutiveSundaysRelaxed = false;
 
-  if (!solution) {
-    strictSeniorityAchieved = false;
-    solution = runSolver(false);
+  if (force || allowConsecutiveSundays) {
+    solution = runSolver(true, true, 3) || runSolver(false, true, 3) || runSolver(false, true, 4);
+    consecutiveSundaysRelaxed = true;
+  } else {
+    // Standard Solver: Pass 1 (Strict Seniority, No Consecutive)
+    solution = runSolver(true, false, 2);
+
+    // Pass 2: Relaxed Seniority, No Consecutive
+    if (!solution) {
+      strictSeniorityAchieved = false;
+      solution = runSolver(false, false, 2);
+    }
+
+    // Pass 3: Forced Fallback (Allow Consecutive Sundays if standard mode failed)
+    if (!solution) {
+      solution = runSolver(true, true, 3) || runSolver(false, true, 3) || runSolver(false, true, 4);
+      if (solution) {
+        consecutiveSundaysRelaxed = true;
+      }
+    }
   }
 
   if (!solution) {
     return {
       success: false,
-      errors: ['Unable to generate a schedule satisfying all hard constraints. Please check volunteer availability and proficiencies.'],
+      errors: ['Não foi possível gerar a escala completa nem com a liberação de domingos consecutivos. Cadastre mais voluntários ou revise indisponibilidades.'],
       schedule: null
     };
   }
 
+  // Trainee assignment phase for slots with main operators >= N2
+  const traineeAssignments = assignTraineesToSolution(solution, consecutiveSundaysRelaxed);
+
   // Format schedule output
-  const schedule = solution.map(s => ({
-    date: s.date,
-    sundayIndex: s.sundayIndex,
-    shift: s.shift,
-    role: s.role,
-    volunteerId: s.volunteerId,
-    volunteerName: volunteerMap.get(s.volunteerId)?.name || s.volunteerId,
-    proficiencyLevel: profMap.get(s.volunteerId)?.get(s.role) || 1
-  }));
+  const schedule = solution.map(s => {
+    const trainee = traineeAssignments.find(t => t.date === s.date && t.shift === s.shift && t.role === s.role);
+    return {
+      date: s.date,
+      sundayIndex: s.sundayIndex,
+      shift: s.shift,
+      role: s.role,
+      volunteerId: s.volunteerId,
+      volunteerName: volunteerMap.get(s.volunteerId)?.name || s.volunteerId,
+      proficiencyLevel: profMap.get(s.volunteerId)?.get(s.role) || 1,
+      isTrainee: false,
+      traineeId: trainee ? trainee.volunteerId : null,
+      traineeName: trainee ? trainee.volunteerName : null
+    };
+  });
 
   // Build bySunday hierarchy
   const bySunday = {};
@@ -218,12 +260,16 @@ export function generateSchedule({
     });
   });
   schedule.forEach(item => {
-    bySunday[item.date][item.shift][item.role] = item.volunteerId;
+    bySunday[item.date][item.shift][item.role] = {
+      main: item.volunteerId,
+      trainee: item.traineeId || null
+    };
   });
 
   // Calculate metrics and warnings
   const warnings = [];
   const assignedVolunteers = new Set(schedule.map(s => s.volunteerId));
+  traineeAssignments.forEach(t => assignedVolunteers.add(t.volunteerId));
   
   let seniorityBalancedShifts = 0;
   const totalShifts = sundays.length * normalizedShifts.length;
@@ -243,11 +289,13 @@ export function generateSchedule({
   return {
     success: true,
     schedule,
+    trainees: traineeAssignments,
     bySunday,
     metrics: {
       sundaysCount: sundays.length,
       totalSlots,
       assignedSlots: schedule.length,
+      traineeSlotsAssigned: traineeAssignments.length,
       uniqueVolunteersAssigned: assignedVolunteers.size,
       totalVolunteersAvailable: normalizedVolunteers.length,
       totalShifts,
@@ -258,9 +306,118 @@ export function generateSchedule({
   };
 
   /**
+   * Helper to assign N1 trainees to slots with main operators >= N2
+   */
+  function assignTraineesToSolution(mainSolution, allowConsecutive) {
+    const volAssignedSundays = new Map();
+    const volMonthCount = new Map();
+
+    normalizedVolunteers.forEach(v => {
+      const sunSet = new Set();
+      if (servedPrevSunday.has(v.id)) {
+        sunSet.add(-1);
+      }
+      volAssignedSundays.set(v.id, sunSet);
+      volMonthCount.set(v.id, 0);
+    });
+
+    // Populate with mainSolution assignments
+    mainSolution.forEach(s => {
+      if (s.volunteerId) {
+        volMonthCount.set(s.volunteerId, (volMonthCount.get(s.volunteerId) || 0) + 1);
+        if (volAssignedSundays.has(s.volunteerId)) {
+          volAssignedSundays.get(s.volunteerId).add(s.sundayIndex);
+        }
+      }
+    });
+
+    const traineeAssignments = [];
+
+    for (const slot of mainSolution) {
+      const mainVolId = slot.volunteerId;
+      if (!mainVolId) continue;
+
+      const mainLevel = getProficiencyLevel(mainVolId, slot.role);
+      if (mainLevel < 2) continue; // Only N2+ can mentor trainees
+
+      const eligibleTrainees = normalizedVolunteers.filter(v => {
+        // Must be level 1 (N1) for this specific role
+        const level = getProficiencyLevel(v.id, slot.role);
+        if (level !== 1) return false;
+
+        // Cannot be the main volunteer
+        if (v.id === mainVolId) return false;
+
+        // Shift preference
+        if (v.allowedShift && v.allowedShift !== 'ALL' && v.allowedShift !== slot.shift) {
+          return false;
+        }
+
+        // Unavailability
+        if (unavailSet.has(`${v.id}:${slot.date}:${slot.shift}`) || unavailSet.has(`${v.id}:${slot.date}`)) {
+          return false;
+        }
+
+        // Max assignments per month limit
+        const currentCount = volMonthCount.get(v.id) || 0;
+        if (currentCount >= 3) return false;
+
+        // Max 1 shift per Sunday (cannot serve as main or trainee on same Sunday twice)
+        const sunSet = volAssignedSundays.get(v.id);
+        if (sunSet && sunSet.has(slot.sundayIndex)) return false;
+
+        // No 2 consecutive Sundays (1-week gap) unless allowConsecutive is true
+        if (!allowConsecutive && sunSet) {
+          if (sunSet.has(slot.sundayIndex - 1) || sunSet.has(slot.sundayIndex + 1)) return false;
+        }
+
+        return true;
+      });
+
+      // Sort candidates by equity
+      eligibleTrainees.sort((a, b) => {
+        const aCount = volMonthCount.get(a.id) || 0;
+        const bCount = volMonthCount.get(b.id) || 0;
+        if (aCount !== bCount) return aCount - bCount;
+
+        const aPast = pastCountMap.get(a.id) || 0;
+        const bPast = pastCountMap.get(b.id) || 0;
+        if (aPast !== bPast) return aPast - bPast;
+
+        const aLast = lastPastDateMap.get(a.id) || '';
+        const bLast = lastPastDateMap.get(b.id) || '';
+        if (aLast !== bLast) return aLast.localeCompare(bLast);
+
+        return a.id.localeCompare(b.id);
+      });
+
+      if (eligibleTrainees.length > 0) {
+        const selectedTrainee = eligibleTrainees[0];
+        traineeAssignments.push({
+          date: slot.date,
+          sundayIndex: slot.sundayIndex,
+          shift: slot.shift,
+          role: slot.role,
+          volunteerId: selectedTrainee.id,
+          volunteerName: selectedTrainee.name,
+          proficiencyLevel: 1,
+          isTrainee: true,
+          trainerId: mainVolId,
+          trainerName: volunteerMap.get(mainVolId)?.name || mainVolId
+        });
+
+        volMonthCount.set(selectedTrainee.id, (volMonthCount.get(selectedTrainee.id) || 0) + 1);
+        volAssignedSundays.get(selectedTrainee.id).add(slot.sundayIndex);
+      }
+    }
+
+    return traineeAssignments;
+  }
+
+  /**
    * Internal backtracking solver
    */
-  function runSolver(requireStrictSeniority) {
+  function runSolver(requireStrictSeniority, allowConsecutive = false, maxPerMonth = 2) {
     // Search state
     const assignmentMap = new Map(); // slot.key -> volunteerId
     const volunteerMonthCount = new Map(); // vId -> count
@@ -284,26 +441,61 @@ export function generateSchedule({
 
     const unassignedSlotKeys = new Set(slots.map(s => s.key));
 
+    // Apply pre-assigned / locked slots
+    (lockedAssignments || []).forEach(locked => {
+      const vId = String(locked.volunteerId || locked.vId || '');
+      const date = locked.date;
+      const shift = String(locked.shift || '').toUpperCase();
+      const role = String(locked.role || '').toUpperCase();
+      const key = `${date}:${shift}:${role}`;
+
+      if (vId && unassignedSlotKeys.has(key)) {
+        const slot = slots.find(s => s.key === key);
+        if (slot) {
+          unassignedSlotKeys.delete(key);
+          assignmentMap.set(key, vId);
+          volunteerMonthCount.set(vId, (volunteerMonthCount.get(vId) || 0) + 1);
+          if (volunteerAssignedSundays.has(vId)) {
+            volunteerAssignedSundays.get(vId).add(slot.sundayIndex);
+          }
+          const lvl = getProficiencyLevel(vId, role);
+          if (lvl >= 2) {
+            const shiftKey = `${date}:${shift}`;
+            shiftSeniorCount.set(shiftKey, (shiftSeniorCount.get(shiftKey) || 0) + 1);
+          }
+        }
+      }
+    });
+
     function isEligible(vId, slot) {
-      // Hard Constraint 1: Proficiency level >= 1
-      const lvl = profMap.get(vId)?.get(slot.role) || 0;
-      if (lvl < 1) return false;
+      // Hard Constraint 0: Allowed shift check
+      const volObj = volunteerMap.get(vId);
+      if (volObj && volObj.allowedShift && volObj.allowedShift !== 'ALL') {
+        if (volObj.allowedShift !== slot.shift) return false;
+      }
+
+      // Hard Constraint 1: Proficiency level (ADR 0002: Critical roles VMIX and SWITCHER require level >= 2)
+      const minRequiredLevel = (slot.role === 'VMIX' || slot.role === 'SWITCHER') ? 2 : 1;
+      const lvl = getProficiencyLevel(vId, slot.role);
+      if (lvl < minRequiredLevel) return false;
 
       // Hard Constraint 2: Unavailability
       if (unavailSet.has(`${vId}:${slot.date}:${slot.shift}`) || unavailSet.has(`${vId}:${slot.date}`)) {
         return false;
       }
 
-      // Hard Constraint 3: Max 2 assignments per month
+      // Hard Constraint 3: Max assignments per month
       const count = volunteerMonthCount.get(vId) || 0;
-      if (count >= 2) return false;
+      if (count >= maxPerMonth) return false;
 
       // Hard Constraint 4: Max 1 shift per Sunday
       const sunSet = volunteerAssignedSundays.get(vId);
       if (sunSet.has(slot.sundayIndex)) return false;
 
-      // Hard Constraint 5: No 2 consecutive Sundays (1-week gap)
-      if (sunSet.has(slot.sundayIndex - 1) || sunSet.has(slot.sundayIndex + 1)) return false;
+      // Hard Constraint 5: No 2 consecutive Sundays (1-week gap) unless allowConsecutive is true
+      if (!allowConsecutive) {
+        if (sunSet.has(slot.sundayIndex - 1) || sunSet.has(slot.sundayIndex + 1)) return false;
+      }
 
       return true;
     }
@@ -321,8 +513,8 @@ export function generateSchedule({
 
       // Sort candidates by soft constraint priorities
       candidates.sort((aId, bId) => {
-        const aLvl = profMap.get(aId)?.get(slot.role) || 1;
-        const bLvl = profMap.get(bId)?.get(slot.role) || 1;
+        const aLvl = getProficiencyLevel(aId, slot.role) || 1;
+        const bLvl = getProficiencyLevel(bId, slot.role) || 1;
 
         const aIsSenior = aLvl >= 2 ? 1 : 0;
         const bIsSenior = bLvl >= 2 ? 1 : 0;

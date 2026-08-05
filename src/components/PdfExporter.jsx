@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Download, MessageCircle, Printer } from 'lucide-react';
 import { exportToPdf, shareToWhatsApp } from '../utils/pdfExport';
+import { getSlotAssignment } from '../utils/scheduleUtils';
 import '../styles/print.css';
 
 export const PdfExporter = ({
@@ -97,11 +98,17 @@ export const PdfExporter = ({
                   <tr>
                     <td className="td-date-shift">{shortDate} - MANHÃ</td>
                     {roles.map(role => {
-                      const volId = schedule[sunday.date]?.['MORNING']?.[role.id];
+                      const { main: volId, trainee: traineeId } = getSlotAssignment(schedule, sunday.date, 'MORNING', role.id);
                       const volName = volId ? (volunteersMap[volId]?.name || 'Não alocado') : '';
+                      const traineeName = traineeId ? volunteersMap[traineeId]?.name : null;
                       return (
                         <td key={role.id} className="td-volunteer-cell">
-                          {volName}
+                          <div>{volName}</div>
+                          {traineeName && (
+                            <div style={{ fontSize: '0.72rem', color: '#0284c7', fontWeight: 600, marginTop: '2px' }}>
+                              (Treino: {traineeName})
+                            </div>
+                          )}
                         </td>
                       );
                     })}
@@ -111,11 +118,17 @@ export const PdfExporter = ({
                   <tr>
                     <td className="td-date-shift">{shortDate} - NOITE</td>
                     {roles.map(role => {
-                      const volId = schedule[sunday.date]?.['NIGHT']?.[role.id];
+                      const { main: volId, trainee: traineeId } = getSlotAssignment(schedule, sunday.date, 'NIGHT', role.id);
                       const volName = volId ? (volunteersMap[volId]?.name || 'Não alocado') : '';
+                      const traineeName = traineeId ? volunteersMap[traineeId]?.name : null;
                       return (
                         <td key={role.id} className="td-volunteer-cell">
-                          {volName}
+                          <div>{volName}</div>
+                          {traineeName && (
+                            <div style={{ fontSize: '0.72rem', color: '#0284c7', fontWeight: 600, marginTop: '2px' }}>
+                              (Treino: {traineeName})
+                            </div>
+                          )}
                         </td>
                       );
                     })}

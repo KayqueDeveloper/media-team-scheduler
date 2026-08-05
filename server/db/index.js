@@ -37,6 +37,7 @@ function initSchema(db) {
       phone TEXT,
       max_monthly_frequency INTEGER DEFAULT 4,
       max_consecutive_sundays INTEGER DEFAULT 2,
+      allowed_shift TEXT DEFAULT 'ALL' CHECK (allowed_shift IN ('MORNING', 'NIGHT', 'ALL')),
       active INTEGER DEFAULT 1 CHECK (active IN (0, 1)),
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -80,12 +81,30 @@ function initSchema(db) {
       date TEXT NOT NULL,
       shift TEXT NOT NULL CHECK (shift IN ('MORNING', 'NIGHT')),
       role TEXT NOT NULL CHECK (role IN ('JIB', 'FIXED_CAM', 'SWITCHER', 'VMIX', 'COORDINATOR', 'FREEHAND')),
+      is_trainee INTEGER DEFAULT 0 CHECK (is_trainee IN (0, 1)),
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE,
       FOREIGN KEY (volunteer_id) REFERENCES volunteers(id) ON DELETE CASCADE,
-      UNIQUE(date, shift, role)
+      UNIQUE(date, shift, role, is_trainee)
     );
   `);
+
+  // Migration check: ensure is_trainee and allowed_shift columns exist on existing DB
+  try {
+    const assignmentsInfo = db.prepare(`PRAGMA table_info(assignments)`).all();
+    const hasIsTrainee = assignmentsInfo.some(col => col.name === 'is_trainee');
+    if (!hasIsTrainee) {
+      db.exec(`ALTER TABLE assignments ADD COLUMN is_trainee INTEGER DEFAULT 0 CHECK (is_trainee IN (0, 1))`);
+    }
+
+    const volInfo = db.prepare(`PRAGMA table_info(volunteers)`).all();
+    const hasAllowedShift = volInfo.some(col => col.name === 'allowed_shift');
+    if (!hasAllowedShift) {
+      db.exec(`ALTER TABLE volunteers ADD COLUMN allowed_shift TEXT DEFAULT 'ALL'`);
+    }
+  } catch (err) {
+    console.error('Migration error:', err);
+  }
 }
 
 export function closeDatabase() {
