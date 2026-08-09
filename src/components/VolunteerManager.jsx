@@ -20,8 +20,10 @@ export const VolunteerManager = ({
   roles,
   onUpdateProficiency,
   onUpdateAllowedShift,
+  onUpdateVolunteer,
   onAddVolunteer,
-  onToggleVolunteerStatus
+  onToggleVolunteerStatus,
+  disabled = false
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -29,38 +31,64 @@ export const VolunteerManager = ({
   const [newVolEmail, setNewVolEmail] = useState('');
   const [newVolPhone, setNewVolPhone] = useState('');
   const [newVolShift, setNewVolShift] = useState('ALL');
+  const [editingVolunteerId, setEditingVolunteerId] = useState(null);
 
   const filteredVolunteers = volunteers.filter(v => 
     (v.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
     (v.email || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleCreateVolunteer = (e) => {
+  const handleCreateVolunteer = async (e) => {
     e.preventDefault();
     if (!newVolName.trim()) return;
     
-    onAddVolunteer({
-      name: newVolName,
-      email: newVolEmail || `${newVolName.toLowerCase().replace(/\s+/g, '.')}@igreja.org`,
-      phone: newVolPhone || '(11) 90000-0000',
-      maxShiftsPerMonth: 2,
-      allowedShift: newVolShift,
-      active: true,
-      proficiencies: {
-        FREEHAND: 0,
-        VMIX: 0,
-        FIXED_CAM: 0,
-        SWITCHER: 0,
-        JIB: 0,
-        COORDINATOR: 0
-      }
-    });
+    const details = {
+      name: newVolName.trim(),
+      email: newVolEmail.trim(),
+      phone: newVolPhone.trim(),
+      allowedShift: newVolShift
+    };
+    const saved = editingVolunteerId
+      ? await onUpdateVolunteer(editingVolunteerId, details)
+      : await onAddVolunteer({
+          ...details,
+          maxShiftsPerMonth: 2,
+          active: true,
+          proficiencies: {
+            FREEHAND: 0,
+            VMIX: 0,
+            FIXED_CAM: 0,
+            SWITCHER: 0,
+            JIB: 0,
+            COORDINATOR: 0
+          }
+        });
 
+    if (!saved) return;
     setNewVolName('');
     setNewVolEmail('');
     setNewVolPhone('');
     setNewVolShift('ALL');
+    setEditingVolunteerId(null);
     setIsAddModalOpen(false);
+  };
+
+  const openCreateModal = () => {
+    setEditingVolunteerId(null);
+    setNewVolName('');
+    setNewVolEmail('');
+    setNewVolPhone('');
+    setNewVolShift('ALL');
+    setIsAddModalOpen(true);
+  };
+
+  const openEditModal = (volunteer) => {
+    setEditingVolunteerId(volunteer.id);
+    setNewVolName(volunteer.name || '');
+    setNewVolEmail(volunteer.email || '');
+    setNewVolPhone(volunteer.phone || '');
+    setNewVolShift(volunteer.allowedShift || 'ALL');
+    setIsAddModalOpen(true);
   };
 
   return (
@@ -82,7 +110,7 @@ export const VolunteerManager = ({
             />
           </div>
 
-          <button className="btn btn-primary" onClick={() => setIsAddModalOpen(true)}>
+          <button className="btn btn-primary" onClick={openCreateModal} disabled={disabled}>
             <UserPlus size={16} />
             Novo Voluntário
           </button>
@@ -103,15 +131,27 @@ export const VolunteerManager = ({
                 </div>
               </div>
 
-              <button 
-                className={`btn ${vol.active ? 'btn-outline' : 'btn-danger'}`}
-                style={{ padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}
-                onClick={() => onToggleVolunteerStatus(vol.id)}
-                title="Alternar Ativo/Inativo"
-              >
-                {vol.active ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
-                {vol.active ? 'Ativo' : 'Inativo'}
-              </button>
+              <div style={{ display: 'flex', gap: '0.4rem' }}>
+                <button
+                  className="btn btn-outline"
+                  style={{ padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}
+                  onClick={() => openEditModal(vol)}
+                  disabled={disabled}
+                  title="Editar dados do voluntário"
+                >
+                  <Sliders size={12} /> Editar
+                </button>
+                <button
+                  className={`btn ${vol.active ? 'btn-outline' : 'btn-danger'}`}
+                  style={{ padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}
+                  onClick={() => onToggleVolunteerStatus(vol.id)}
+                  disabled={disabled}
+                  title="Alternar Ativo/Inativo"
+                >
+                  {vol.active ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
+                  {vol.active ? 'Ativo' : 'Inativo'}
+                </button>
+              </div>
             </div>
 
             {/* Shift Restriction Lock Selector */}
@@ -123,6 +163,7 @@ export const VolunteerManager = ({
                   className={`btn ${(vol.allowedShift || 'ALL') === 'ALL' ? 'btn-primary' : 'btn-outline'}`}
                   style={{ padding: '0.2rem 0.45rem', fontSize: '0.72rem' }}
                   onClick={() => onUpdateAllowedShift && onUpdateAllowedShift(vol.id, 'ALL')}
+                  disabled={disabled}
                   title="Pode servir em qualquer turno"
                 >
                   <Clock size={12} /> Ambos
@@ -132,6 +173,7 @@ export const VolunteerManager = ({
                   className={`btn ${(vol.allowedShift || 'ALL') === 'MORNING' ? 'btn-primary' : 'btn-outline'}`}
                   style={{ padding: '0.2rem 0.45rem', fontSize: '0.72rem' }}
                   onClick={() => onUpdateAllowedShift && onUpdateAllowedShift(vol.id, 'MORNING')}
+                  disabled={disabled}
                   title="Travar voluntário APENAS no turno da Manhã"
                 >
                   <Sun size={12} /> Manhã
@@ -141,6 +183,7 @@ export const VolunteerManager = ({
                   className={`btn ${(vol.allowedShift || 'ALL') === 'NIGHT' ? 'btn-primary' : 'btn-outline'}`}
                   style={{ padding: '0.2rem 0.45rem', fontSize: '0.72rem' }}
                   onClick={() => onUpdateAllowedShift && onUpdateAllowedShift(vol.id, 'NIGHT')}
+                  disabled={disabled}
                   title="Travar voluntário APENAS no turno da Noite"
                 >
                   <Moon size={12} /> Noite
@@ -164,6 +207,7 @@ export const VolunteerManager = ({
                           type="button"
                           className={`prof-star-btn ${currentLevel === lvl ? `active lvl-${lvl}` : ''}`}
                           onClick={() => onUpdateProficiency(vol.id, role.id, currentLevel === lvl ? 0 : lvl)}
+                          disabled={disabled}
                           title={currentLevel === lvl ? `Remover proficiência de ${role.name}` : `Definir Nível ${lvl} para ${role.name}`}
                         >
                           N{lvl}
@@ -183,7 +227,7 @@ export const VolunteerManager = ({
         <div className="modal-overlay">
           <div className="modal-content">
             <div className="modal-header">
-              <h3>Cadastrar Novo Voluntário</h3>
+              <h3>{editingVolunteerId ? 'Editar Voluntário' : 'Cadastrar Novo Voluntário'}</h3>
               <button className="close-btn" onClick={() => setIsAddModalOpen(false)}>✕</button>
             </div>
             <form onSubmit={handleCreateVolunteer}>
@@ -238,8 +282,8 @@ export const VolunteerManager = ({
                 <button type="button" className="btn btn-outline" onClick={() => setIsAddModalOpen(false)}>
                   Cancelar
                 </button>
-                <button type="submit" className="btn btn-primary">
-                  Salvar Cadastramento
+                <button type="submit" className="btn btn-primary" disabled={disabled}>
+                  {editingVolunteerId ? 'Salvar Alterações' : 'Salvar Cadastramento'}
                 </button>
               </div>
             </form>

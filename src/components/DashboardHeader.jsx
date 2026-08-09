@@ -21,7 +21,10 @@ export const DashboardHeader = ({
   onToggleStatus,
   onGenerateAuto,
   onTabChange,
-  onOpenPdfModal
+  onOpenPdfModal,
+  disabled = false,
+  busyAction = '',
+  hasSchedule = false
 }) => {
   return (
     <header className="dashboard-header glass-panel">
@@ -43,6 +46,7 @@ export const DashboardHeader = ({
               className="month-btn" 
               onClick={() => onMonthChange(-1)} 
               title="Mês Anterior"
+              disabled={disabled}
             >
               <ChevronLeft size={18} />
             </button>
@@ -51,37 +55,37 @@ export const DashboardHeader = ({
               className="month-btn" 
               onClick={() => onMonthChange(1)} 
               title="Próximo Mês"
+              disabled={disabled}
             >
               <ChevronRight size={18} />
             </button>
           </div>
 
           {/* Status Badge & Toggle Button */}
-          <div 
+          <button
+            type="button"
             className={`status-badge ${status}`} 
             onClick={onToggleStatus}
-            style={{ cursor: 'pointer' }}
-            title="Clique para alternar entre Rascunho e Publicado"
+            disabled={disabled || (!hasSchedule && status === 'draft')}
+            title={status === 'draft' ? 'Publicar a escala' : 'Reabrir a escala para edição'}
           >
             <span className="status-dot"></span>
             {status === 'draft' ? (
-              <>
-                <AlertCircle size={14} /> Rascunho
-              </>
+              <><AlertCircle size={14} /> {busyAction === 'publishing' ? 'Publicando…' : 'Rascunho · Publicar'}</>
             ) : (
               <>
-                <CheckCircle2 size={14} /> Publicado
+                <CheckCircle2 size={14} /> {busyAction === 'reopening' ? 'Reabrindo…' : 'Publicada · Reabrir'}
               </>
             )}
-          </div>
-
-          {/* Action Buttons */}
-          <button className="btn btn-secondary" onClick={onGenerateAuto}>
-            <Sparkles size={16} />
-            Gerar Automático (IA)
           </button>
 
-          <button className="btn btn-primary" onClick={onOpenPdfModal}>
+          {/* Action Buttons */}
+          <button className="btn btn-secondary" onClick={onGenerateAuto} disabled={disabled || status === 'published'}>
+            <Sparkles size={16} />
+            {busyAction === 'generating' ? 'Gerando…' : 'Gerar automaticamente'}
+          </button>
+
+          <button className="btn btn-primary" onClick={onOpenPdfModal} disabled={disabled}>
             <Download size={16} />
             Exportação PDF
           </button>
@@ -93,6 +97,7 @@ export const DashboardHeader = ({
         <button
           className={`tab-btn ${activeTab === 'schedule' ? 'active' : ''}`}
           onClick={() => onTabChange('schedule')}
+          disabled={disabled}
         >
           <Grid size={16} />
           Matriz de Escala
@@ -101,6 +106,7 @@ export const DashboardHeader = ({
         <button
           className={`tab-btn ${activeTab === 'volunteers' ? 'active' : ''}`}
           onClick={() => onTabChange('volunteers')}
+          disabled={disabled}
         >
           <Users size={16} />
           Voluntários & Proficiências
@@ -109,6 +115,7 @@ export const DashboardHeader = ({
         <button
           className={`tab-btn ${activeTab === 'unavailability' ? 'active' : ''}`}
           onClick={() => onTabChange('unavailability')}
+          disabled={disabled}
         >
           <Clock size={16} />
           Indisponibilidades
@@ -117,6 +124,7 @@ export const DashboardHeader = ({
         <button
           className={`tab-btn ${activeTab === 'print' ? 'active' : ''}`}
           onClick={() => onTabChange('print')}
+          disabled={disabled}
         >
           <Printer size={16} />
           Visualização para Impressão

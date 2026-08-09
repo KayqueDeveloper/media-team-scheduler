@@ -1,447 +1,410 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { generateSchedule } from '../server/solver/scheduler.js';
-import './styles/main.css';
+import React, { useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, CheckCircle2, LoaderCircle, RefreshCw, X } from 'lucide-react';
+
+import { api } from './api/client';
 import { DashboardHeader } from './components/DashboardHeader';
-import { ScheduleMatrix } from './components/ScheduleMatrix';
-import { VolunteerManager } from './components/VolunteerManager';
-import { UnavailabilityManager } from './components/UnavailabilityManager';
 import { PdfExporter } from './components/PdfExporter';
-import { 
-  INITIAL_ROLES, 
-  INITIAL_VOLUNTEERS, 
-  INITIAL_SUNDAYS, 
-  SHIFTS, 
-  INITIAL_UNAVAILABILITIES,
-  getSundaysForMonth,
-  generateInitialSchedule 
-} from './mockData/initialData';
-import { Sparkles, CheckCircle2, AlertTriangle, X } from 'lucide-react';
-import { getSlotAssignment } from './utils/scheduleUtils';
+import { ScheduleMatrix } from './components/ScheduleMatrix';
+import { UnavailabilityManager } from './components/UnavailabilityManager';
+import { VolunteerManager } from './components/VolunteerManager';
+import { getSundaysForMonth, MONTH_NAMES, ROLES, SHIFTS } from './domain/catalog';
+import {
+  collectScheduleWarnings,
+  ensureScheduleSlots,
+  updateScheduleSlot,
+  validateScheduleChange
+} from './utils/scheduleUtils';
+import './styles/main.css';
+
+const initialScheduleState = {
+  id: null,
+  status: 'draft',
+  matrix: {},
+  lockedSlots: [],
+  warnings: [],
+  publishedVersion: null
+};
+
+function hasMatrixData(matrix) {
+  return Object.keys(matrix || {}).length > 0;
+}
+
+function mergeScheduleResponse(remote, fallback, sundays) {
+  return {
+    ...fallback,
+    ...remote,
+    id: remote.id || fallback.id,
+    matrix: ensureScheduleSlots(hasMatrixData(remote.matrix) ? remote.matrix : fallback.matrix, sundays, SHIFTS, ROLES),
+    lockedSlots: remote.lockedSlots?.length ? remote.lockedSlots : fallback.lockedSlots,
+    warnings: remote.warnings?.length ? remote.warnings : fallback.warnings
+  };
+}
 
 export function App() {
-  const [monthIndex, setMonthIndex] = useState(7); // August (0-indexed)
-  const [year] = useState(2026);
-  const [status, setStatus] = useState('draft'); // 'draft' | 'published'
+  const today = useMemo(() => new Date(), []);
+  const [monthIndex, setMonthIndex] = useState(today.getMonth());
+  const [year, setYear] = useState(today.getFullYear());
   const [activeTab, setActiveTab] = useState('schedule');
+  const [volunteers, setVolunteers] = useState([]);
+  const [unavailabilities, setUnavailabilities] = useState([]);
+  const [scheduleState, setScheduleState] = useState(initialScheduleState);
+  const [publishedVersions, setPublishedVersions] = useState([]);
   const [notification, setNotification] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [busyAction, setBusyAction] = useState('');
+  const [reloadToken, setReloadToken] = useState(0);
 
-  const [roles] = useState(INITIAL_ROLES);
-  const [shifts] = useState(SHIFTS);
-
-  // Persistent State via localStorage
-  const [volunteers, setVolunteers] = useState(() => {
-    try {
-      const saved = localStorage.getItem('escala_volunteers');
-      return saved ? JSON.parse(saved) : INITIAL_VOLUNTEERS;
-    } catch {
-      return INITIAL_VOLUNTEERS;
-    }
-  });
-
-  const [unavailabilities, setUnavailabilities] = useState(() => {
-    try {
-      const saved = localStorage.getItem('escala_unavailabilities');
-      return saved ? JSON.parse(saved) : INITIAL_UNAVAILABILITIES;
-    } catch {
-      return INITIAL_UNAVAILABILITIES;
-    }
-  });
-
-  // Compute sundays dynamically for selected month
-  const sundays = useMemo(() => {
-    return getSundaysForMonth(year, monthIndex);
-  }, [year, monthIndex]);
-
-  const [schedule, setSchedule] = useState(() => {
-    try {
-      const saved = localStorage.getItem('escala_schedule');
-      return saved ? JSON.parse(saved) : generateInitialSchedule(INITIAL_SUNDAYS);
-    } catch {
-      return generateInitialSchedule(INITIAL_SUNDAYS);
-    }
-  });
-
-  // Auto-save changes to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem('escala_volunteers', JSON.stringify(volunteers));
-    } catch (e) {
-      console.error('Error saving volunteers to localStorage', e);
-    }
-  }, [volunteers]);
+  const sundays = useMemo(() => getSundaysForMonth(year, monthIndex), [year, monthIndex]);
+  const month = monthIndex + 1;
+  const currentMonthLabel = `${MONTH_NAMES[monthIndex]} ${year}`;
+  const isPublished = scheduleState.status === 'published';
+  const isBusy = Boolean(busyAction);
 
   useEffect(() => {
-    try {
-      localStorage.setItem('escala_unavailabilities', JSON.stringify(unavailabilities));
-    } catch (e) {
-      console.error('Error saving unavailabilities to localStorage', e);
-    }
-  }, [unavailabilities]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('escala_schedule', JSON.stringify(schedule));
-    } catch (e) {
-      console.error('Error saving schedule to localStorage', e);
-    }
-  }, [schedule]);
-
-  // Auto initialize schedule slots when sundays change if not present
-  useEffect(() => {
-    setSchedule(prev => {
-      const updated = { ...prev };
-      let changed = false;
-      sundays.forEach(sunday => {
-        if (!updated[sunday.date]) {
-          changed = true;
-          updated[sunday.date] = {
-            MORNING: { FREEHAND: '', VMIX: '', FIXED_CAM: '', SWITCHER: '', JIB: '', COORDINATOR: '' },
-            NIGHT: { FREEHAND: '', VMIX: '', FIXED_CAM: '', SWITCHER: '', JIB: '', COORDINATOR: '' }
-          };
-        }
-      });
-      return changed ? updated : prev;
-    });
-  }, [sundays]);
-
-  const monthNames = [
-    'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
-    'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
-  ];
-
-  const currentMonthLabel = `${monthNames[monthIndex]} ${year}`;
-
-  const handleMonthChange = (delta) => {
-    let newIndex = monthIndex + delta;
-    if (newIndex < 0) newIndex = 11;
-    if (newIndex > 11) newIndex = 0;
-    setMonthIndex(newIndex);
+    const controller = new AbortController();
+    setLoading(true);
+    setLoadError('');
     setNotification(null);
-  };
 
-  const handleToggleStatus = () => {
-    setStatus(prev => prev === 'draft' ? 'published' : 'draft');
-  };
+    api.loadMonth(year, month, { signal: controller.signal })
+      .then(data => {
+        setVolunteers(data.volunteers);
+        setUnavailabilities(data.unavailabilities);
+        setScheduleState({
+          ...initialScheduleState,
+          ...data.schedule,
+          matrix: ensureScheduleSlots(data.schedule.matrix, sundays, SHIFTS, ROLES)
+        });
+        setPublishedVersions(data.versions || []);
+      })
+      .catch(error => {
+        if (error.name !== 'AbortError') setLoadError(error.message);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
 
-  // Schedule slot change handler (type = 'main' | 'trainee')
-  const handleScheduleChange = (date, shiftId, roleId, volunteerId, type = 'main') => {
-    setSchedule(prev => {
-      const current = getSlotAssignment(prev, date, shiftId, roleId);
-      const updatedSlot = {
-        ...current,
-        [type]: volunteerId
-      };
-      return {
-        ...prev,
-        [date]: {
-          ...prev[date],
-          [shiftId]: {
-            ...prev[date]?.[shiftId],
-            [roleId]: updatedSlot
-          }
-        }
-      };
-    });
-  };
+    return () => controller.abort();
+  }, [year, month, sundays, reloadToken]);
 
-  // Automated AI/Algorithm schedule generator connected to official Constraint Solver
-  const INITIAL_LOCKED_SLOTS = [
-    '2026-08-02:MORNING:COORDINATOR',
-    '2026-08-02:MORNING:VMIX',
-    '2026-08-02:MORNING:FIXED_CAM',
-    '2026-08-02:MORNING:FREEHAND',
-    '2026-08-02:MORNING:SWITCHER',
-    '2026-08-02:MORNING:JIB',
-    '2026-08-02:NIGHT:COORDINATOR',
-    '2026-08-02:NIGHT:VMIX',
-    '2026-08-02:NIGHT:FIXED_CAM',
-    '2026-08-02:NIGHT:FREEHAND',
-    '2026-08-02:NIGHT:JIB'
-  ];
+  function notify(type, message) {
+    setNotification({ type, message });
+  }
 
-  const [lockedSlots, setLockedSlots] = useState(() => {
-    try {
-      const saved = localStorage.getItem('escala_locked_slots');
-      return saved ? JSON.parse(saved) : INITIAL_LOCKED_SLOTS;
-    } catch {
-      return INITIAL_LOCKED_SLOTS;
-    }
-  });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('escala_locked_slots', JSON.stringify(lockedSlots));
-    } catch (e) {
-      console.error('Error saving lockedSlots to localStorage', e);
-    }
-  }, [lockedSlots]);
-
-  const handleToggleLockSlot = (date, shiftId, roleId) => {
-    const slotKey = `${date}:${shiftId}:${roleId}`;
-    setLockedSlots(prev => {
-      if (prev.includes(slotKey)) {
-        return prev.filter(k => k !== slotKey);
-      } else {
-        return [...prev, slotKey];
-      }
-    });
-  };
-
-  // Automated AI/Algorithm schedule generator connected to official Constraint Solver
-  const handleGenerateAutoSchedule = () => {
+  async function runMutation(action, operation) {
+    if (isBusy) return false;
+    setBusyAction(action);
     setNotification(null);
     try {
-      const yearNum = year;
-      const monthNum = monthIndex + 1;
-
-      const profList = [];
-      volunteers.forEach(v => {
-        if (v.proficiencies) {
-          Object.entries(v.proficiencies).forEach(([roleId, level]) => {
-            if (level > 0) {
-              profList.push({ volunteerId: String(v.id), role: roleId, level });
-            }
-          });
-        }
-      });
-
-      // Collect ONLY user-locked slots
-      const lockedAssignments = [];
-      if (schedule && lockedSlots) {
-        lockedSlots.forEach(slotKey => {
-          const [d, s, r] = slotKey.split(':');
-          const slotVal = getSlotAssignment(schedule, d, s, r);
-          if (slotVal.main) {
-            lockedAssignments.push({
-              date: d,
-              shift: s,
-              role: r,
-              volunteerId: String(slotVal.main)
-            });
-          }
-        });
-      }
-
-      const result = generateSchedule({
-        year: yearNum,
-        month: monthNum,
-        volunteers: volunteers.filter(v => v.active).map(v => ({ ...v, id: String(v.id) })),
-        proficiencies: profList,
-        unavailabilities: unavailabilities.map(u => ({ ...u, volunteerId: String(u.volunteerId) })),
-        pastAssignments: [],
-        roles: roles.map(r => r.id),
-        shifts: shifts.map(s => s.id),
-        lockedAssignments,
-        force: true
-      });
-
-      if (result && result.success && result.bySunday) {
-        setSchedule(prev => {
-          const updated = { ...prev };
-          sundays.forEach(sunday => {
-            updated[sunday.date] = updated[sunday.date] || { MORNING: {}, NIGHT: {} };
-            shifts.forEach(shift => {
-              updated[sunday.date][shift.id] = updated[sunday.date][shift.id] || {};
-              roles.forEach(role => {
-                const slotKey = `${sunday.date}:${shift.id}:${role.id}`;
-                if (!lockedSlots.includes(slotKey)) {
-                  const generatedVal = result.bySunday[sunday.date]?.[shift.id]?.[role.id];
-                  if (typeof generatedVal === 'object') {
-                    updated[sunday.date][shift.id][role.id] = {
-                      main: generatedVal.main || '',
-                      trainee: generatedVal.trainee || ''
-                    };
-                  } else {
-                    updated[sunday.date][shift.id][role.id] = {
-                      main: generatedVal || '',
-                      trainee: ''
-                    };
-                  }
-                }
-              });
-            });
-          });
-          return updated;
-        });
-
-        const traineeCount = result.metrics?.traineeSlotsAssigned || result.trainees?.length || 0;
-        setNotification({
-          type: 'success',
-          message: `✨ Nova proposta de escala gerada com sucesso! ${traineeCount > 0 ? `${traineeCount} voluntários N1 foram adicionados para treinamento em dupla com operadores N2+.` : ''}`
-        });
-      } else {
-        setNotification({
-          type: 'warning',
-          message: '⚠️ Não foi possível preencher todas as vagas. Verifique se há voluntários suficientes cadastrados.'
-        });
-      }
-    } catch (err) {
-      console.error(err);
-      setNotification({
-        type: 'error',
-        message: 'Erro ao gerar escala: ' + err.message
-      });
+      await operation();
+      return true;
+    } catch (error) {
+      notify('error', error.message);
+      return false;
+    } finally {
+      setBusyAction('');
     }
-  };
+  }
 
-  // Volunteer Handlers
-  const handleUpdateProficiency = (volunteerId, roleId, level) => {
-    const vIdStr = String(volunteerId);
-    setVolunteers(prev => prev.map(v => {
-      if (String(v.id) === vIdStr) {
-        return {
-          ...v,
-          proficiencies: {
-            ...v.proficiencies,
-            [roleId]: level
-          }
-        };
-      }
-      return v;
-    }));
-  };
+  function handleMonthChange(delta) {
+    const next = new Date(Date.UTC(year, monthIndex + delta, 1));
+    setYear(next.getUTCFullYear());
+    setMonthIndex(next.getUTCMonth());
+  }
 
-  const handleUpdateAllowedShift = (volunteerId, allowedShift) => {
-    const vIdStr = String(volunteerId);
-    setVolunteers(prev => prev.map(v => {
-      if (String(v.id) === vIdStr) {
-        return { ...v, allowedShift };
-      }
-      return v;
-    }));
-  };
+  async function persistSchedule(candidate, successMessage) {
+    if (!candidate.id) throw new Error('Gere a escala para criar o rascunho antes de fazer ajustes manuais.');
+    const remote = await api.saveSchedule(candidate.id, {
+      year,
+      month,
+      matrix: candidate.matrix,
+      lockedSlots: candidate.lockedSlots,
+      warnings: candidate.warnings
+    });
+    setScheduleState(mergeScheduleResponse(remote, candidate, sundays));
+    if (successMessage) notify('success', successMessage);
+  }
 
-  const handleAddVolunteer = (newVol) => {
-    const created = {
-      ...newVol,
-      id: `vol-${Date.now()}`
+  async function handleScheduleChange(date, shift, role, volunteerId, type = 'main') {
+    if (isPublished) {
+      notify('warning', 'Reabra a escala antes de editar alocações.');
+      return false;
+    }
+    const validationError = validateScheduleChange({
+      schedule: scheduleState.matrix,
+      volunteers,
+      unavailabilities,
+      sundays,
+      date,
+      shift,
+      role,
+      volunteerId,
+      type
+    });
+    if (validationError) {
+      notify('warning', validationError);
+      return false;
+    }
+
+    const candidate = {
+      ...scheduleState,
+      matrix: updateScheduleSlot(scheduleState.matrix, date, shift, role, volunteerId, type)
     };
-    setVolunteers(prev => [...prev, created]);
-  };
+    candidate.warnings = collectScheduleWarnings({
+      schedule: candidate.matrix,
+      sundays,
+      shifts: SHIFTS,
+      roles: ROLES,
+      volunteers
+    });
+    return runMutation('saving-schedule', () => persistSchedule(candidate, 'Alocação salva no rascunho.'));
+  }
 
-  const handleToggleVolunteerStatus = (volunteerId) => {
-    const vIdStr = String(volunteerId);
-    setVolunteers(prev => prev.map(v => {
-      if (String(v.id) === vIdStr) {
-        return { ...v, active: !v.active };
-      }
-      return v;
-    }));
-  };
+  async function handleToggleLockSlot(date, shift, role) {
+    if (isPublished) {
+      notify('warning', 'Reabra a escala antes de alterar vagas travadas.');
+      return;
+    }
+    const key = `${date}:${shift}:${role}`;
+    const lockedSlots = scheduleState.lockedSlots.includes(key)
+      ? scheduleState.lockedSlots.filter(item => item !== key)
+      : [...scheduleState.lockedSlots, key];
+    const candidate = { ...scheduleState, lockedSlots };
+    await runMutation('saving-locks', () => persistSchedule(candidate, 'Vagas travadas atualizadas.'));
+  }
 
-  // Unavailability Handlers
-  const handleAddUnavailability = (newUnavail) => {
-    setUnavailabilities(prev => [...prev, newUnavail]);
-  };
+  async function handleGenerateAutoSchedule() {
+    if (isPublished) {
+      notify('warning', 'Reabra a escala antes de gerar uma nova proposta.');
+      return;
+    }
+    await runMutation('generating', async () => {
+      const generated = await api.generateSchedule({
+        year,
+        month,
+        lockedSlots: scheduleState.lockedSlots,
+        matrix: scheduleState.matrix
+      });
+      const next = mergeScheduleResponse(generated, scheduleState, sundays);
+      next.warnings = [...new Set([
+        ...(generated.warnings || []),
+        ...collectScheduleWarnings({
+          schedule: next.matrix,
+          sundays,
+          shifts: SHIFTS,
+          roles: ROLES,
+          volunteers
+        })
+      ])];
+      setScheduleState(next);
+      notify(next.warnings.length ? 'warning' : 'success', next.warnings.length
+        ? `Proposta gerada com ${next.warnings.length} alerta(s) para revisão.`
+        : 'Nova proposta de escala gerada e persistida com sucesso.');
+    });
+  }
 
-  const handleRemoveUnavailability = (id) => {
-    setUnavailabilities(prev => prev.filter(u => u.id !== id));
-  };
+  async function handlePublishOrReopen() {
+    if (!scheduleState.id) {
+      notify('warning', 'Gere uma escala antes de publicar.');
+      return;
+    }
+
+    if (isPublished) {
+      if (!window.confirm('Reabrir esta escala? Ela voltará a ser um rascunho editável.')) return;
+      await runMutation('reopening', async () => {
+        const remote = await api.reopenSchedule(scheduleState.id);
+        setScheduleState(mergeScheduleResponse(remote, { ...scheduleState, status: 'draft' }, sundays));
+        notify('success', 'Escala reaberta para edição.');
+      });
+      return;
+    }
+
+    const warnings = [...new Set([
+      ...scheduleState.warnings,
+      ...collectScheduleWarnings({
+        schedule: scheduleState.matrix,
+        sundays,
+        shifts: SHIFTS,
+        roles: ROLES,
+        volunteers
+      })
+    ])];
+    const warningText = warnings.length
+      ? `\n\nAlertas que serão confirmados e registrados:\n- ${warnings.join('\n- ')}`
+      : '';
+    if (!window.confirm(`Publicar ${currentMonthLabel} como escala oficial?${warningText}`)) return;
+
+    await runMutation('publishing', async () => {
+      const remote = await api.publishSchedule(scheduleState.id, {
+        warnings,
+        confirmedWarnings: warnings.length > 0
+      });
+      setScheduleState(mergeScheduleResponse(remote, { ...scheduleState, status: 'published', warnings }, sundays));
+      setPublishedVersions(await api.getScheduleVersions(scheduleState.id));
+      notify('success', 'Escala publicada. PDF e WhatsApp oficiais estão liberados.');
+    });
+  }
+
+  async function handleAddVolunteer(newVolunteer) {
+    return runMutation('creating-volunteer', async () => {
+      const created = await api.createVolunteer(newVolunteer);
+      setVolunteers(current => [...current, created].sort((a, b) => a.name.localeCompare(b.name)));
+      notify('success', 'Voluntário cadastrado.');
+    });
+  }
+
+  async function handleUpdateProficiency(volunteerId, role, level) {
+    const volunteer = volunteers.find(item => String(item.id) === String(volunteerId));
+    if (!volunteer) return false;
+    const proficiencies = { ...volunteer.proficiencies, [role]: level };
+    return runMutation('updating-volunteer', async () => {
+      await api.updateProficiencies(volunteerId, proficiencies);
+      setVolunteers(current => current.map(item => String(item.id) === String(volunteerId)
+        ? { ...item, proficiencies }
+        : item));
+      notify('success', 'Proficiência atualizada.');
+    });
+  }
+
+  async function handleUpdateAllowedShift(volunteerId, allowedShift) {
+    return runMutation('updating-volunteer', async () => {
+      const updated = await api.updateVolunteer(volunteerId, { allowedShift });
+      setVolunteers(current => current.map(item => String(item.id) === String(volunteerId) ? updated : item));
+      notify('success', 'Turno permitido atualizado.');
+    });
+  }
+
+  async function handleUpdateVolunteer(volunteerId, changes) {
+    return runMutation('updating-volunteer', async () => {
+      const updated = await api.updateVolunteer(volunteerId, changes);
+      setVolunteers(current => current.map(item => String(item.id) === String(volunteerId) ? updated : item));
+      notify('success', 'Dados do voluntário atualizados.');
+    });
+  }
+
+  async function handleToggleVolunteerStatus(volunteerId) {
+    const volunteer = volunteers.find(item => String(item.id) === String(volunteerId));
+    if (!volunteer) return;
+    await runMutation('updating-volunteer', async () => {
+      const updated = await api.updateVolunteer(volunteerId, { active: !volunteer.active });
+      setVolunteers(current => current.map(item => String(item.id) === String(volunteerId) ? updated : item));
+      notify('success', updated.active ? 'Voluntário reativado.' : 'Voluntário inativado e preservado no histórico.');
+    });
+  }
+
+  async function handleAddUnavailability(newUnavailability) {
+    return runMutation('creating-unavailability', async () => {
+      const created = await api.createUnavailability(newUnavailability);
+      setUnavailabilities(current => [...current, created].sort((a, b) => a.date.localeCompare(b.date)));
+      notify('success', 'Indisponibilidade registrada.');
+    });
+  }
+
+  async function handleRemoveUnavailability(id) {
+    if (!window.confirm('Remover esta indisponibilidade?')) return;
+    await runMutation('deleting-unavailability', async () => {
+      await api.deleteUnavailability(id);
+      setUnavailabilities(current => current.filter(item => String(item.id) !== String(id)));
+      notify('success', 'Indisponibilidade removida.');
+    });
+  }
 
   return (
     <div className="app-container">
       <DashboardHeader
         currentMonth={currentMonthLabel}
-        status={status}
+        status={scheduleState.status}
         activeTab={activeTab}
         onMonthChange={handleMonthChange}
-        onToggleStatus={handleToggleStatus}
+        onToggleStatus={handlePublishOrReopen}
         onGenerateAuto={handleGenerateAutoSchedule}
         onTabChange={setActiveTab}
         onOpenPdfModal={() => setActiveTab('print')}
+        disabled={loading || isBusy}
+        busyAction={busyAction}
+        hasSchedule={Boolean(scheduleState.id)}
       />
 
       {notification && (
-        <div 
-          style={{
-            padding: '1rem 1.25rem',
-            marginBottom: '1.5rem',
-            borderRadius: '12px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '1rem',
-            background: notification.type === 'success' 
-              ? 'rgba(16, 185, 129, 0.15)' 
-              : notification.type === 'warning'
-              ? 'rgba(245, 158, 11, 0.15)'
-              : 'rgba(244, 63, 94, 0.15)',
-            border: notification.type === 'success'
-              ? '1px solid rgba(16, 185, 129, 0.4)'
-              : notification.type === 'warning'
-              ? '1px solid rgba(245, 158, 11, 0.4)'
-              : '1px solid rgba(244, 63, 94, 0.4)',
-            color: notification.type === 'success'
-              ? '#34d399'
-              : notification.type === 'warning'
-              ? '#fbbf24'
-              : '#f87171'
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontWeight: 600, fontSize: '0.95rem' }}>
+        <div className={`app-notification ${notification.type}`} role="status">
+          <div>
             {notification.type === 'success' ? <CheckCircle2 size={20} /> : <AlertTriangle size={20} />}
             <span>{notification.message}</span>
           </div>
-          <button 
-            onClick={() => setNotification(null)}
-            style={{ background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer' }}
-          >
-            <X size={18} />
-          </button>
+          <button onClick={() => setNotification(null)} aria-label="Fechar aviso"><X size={18} /></button>
         </div>
       )}
 
       <main className="main-content">
-        {activeTab === 'schedule' && (
-          <ScheduleMatrix
-            sundays={sundays}
-            shifts={shifts}
-            roles={roles}
-            volunteers={volunteers}
-            schedule={schedule}
-            unavailabilities={unavailabilities}
-            lockedSlots={lockedSlots}
-            onScheduleChange={handleScheduleChange}
-            onGenerateAuto={handleGenerateAutoSchedule}
-            onToggleLockSlot={handleToggleLockSlot}
-          />
-        )}
+        {loading ? (
+          <div className="app-state glass-panel"><LoaderCircle className="spin" size={30} /><p>Carregando dados de {currentMonthLabel}…</p></div>
+        ) : loadError ? (
+          <div className="app-state app-state-error glass-panel">
+            <AlertTriangle size={30} />
+            <h2>Não foi possível carregar o painel</h2>
+            <p>{loadError}</p>
+            <button className="btn btn-primary" onClick={() => setReloadToken(value => value + 1)}><RefreshCw size={16} /> Tentar novamente</button>
+          </div>
+        ) : (
+          <>
+            {activeTab === 'schedule' && (
+              <ScheduleMatrix
+                sundays={sundays}
+                shifts={SHIFTS}
+                roles={ROLES}
+                volunteers={volunteers}
+                schedule={scheduleState.matrix}
+                unavailabilities={unavailabilities}
+                lockedSlots={scheduleState.lockedSlots}
+                onScheduleChange={handleScheduleChange}
+                onGenerateAuto={handleGenerateAutoSchedule}
+                onToggleLockSlot={handleToggleLockSlot}
+                readOnly={isPublished || isBusy}
+              />
+            )}
 
-        {activeTab === 'volunteers' && (
-          <VolunteerManager
-            volunteers={volunteers}
-            roles={roles}
-            onUpdateProficiency={handleUpdateProficiency}
-            onUpdateAllowedShift={handleUpdateAllowedShift}
-            onAddVolunteer={handleAddVolunteer}
-            onToggleVolunteerStatus={handleToggleVolunteerStatus}
-          />
-        )}
+            {activeTab === 'volunteers' && (
+              <VolunteerManager
+                volunteers={volunteers}
+                roles={ROLES}
+                onUpdateProficiency={handleUpdateProficiency}
+                onUpdateAllowedShift={handleUpdateAllowedShift}
+                onUpdateVolunteer={handleUpdateVolunteer}
+                onAddVolunteer={handleAddVolunteer}
+                onToggleVolunteerStatus={handleToggleVolunteerStatus}
+                disabled={isBusy}
+              />
+            )}
 
-        {activeTab === 'unavailability' && (
-          <UnavailabilityManager
-            unavailabilities={unavailabilities}
-            volunteers={volunteers}
-            sundays={sundays}
-            shifts={shifts}
-            onAddUnavailability={handleAddUnavailability}
-            onRemoveUnavailability={handleRemoveUnavailability}
-          />
-        )}
+            {activeTab === 'unavailability' && (
+              <UnavailabilityManager
+                unavailabilities={unavailabilities}
+                volunteers={volunteers}
+                sundays={sundays}
+                shifts={SHIFTS}
+                onAddUnavailability={handleAddUnavailability}
+                onRemoveUnavailability={handleRemoveUnavailability}
+                disabled={isBusy}
+              />
+            )}
 
-        {activeTab === 'print' && (
-          <PdfExporter
-            schedule={schedule}
-            volunteers={volunteers}
-            sundays={sundays}
-            shifts={shifts}
-            roles={roles}
-            monthLabel={currentMonthLabel}
-            status={status}
-          />
+            {activeTab === 'print' && (
+              <PdfExporter
+                schedule={scheduleState.matrix}
+                volunteers={volunteers}
+                sundays={sundays}
+                shifts={SHIFTS}
+                roles={ROLES}
+                monthLabel={currentMonthLabel}
+                status={scheduleState.status}
+                version={scheduleState.publishedVersion}
+                versions={publishedVersions}
+              />
+            )}
+          </>
         )}
       </main>
     </div>
   );
 }
-

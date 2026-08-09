@@ -69,6 +69,9 @@ function initSchema(db) {
       year INTEGER NOT NULL,
       month INTEGER NOT NULL CHECK (month BETWEEN 1 AND 12),
       status TEXT NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT', 'PUBLISHED')),
+      locked_slots TEXT NOT NULL DEFAULT '[]',
+      warnings TEXT NOT NULL DEFAULT '[]',
+      published_version INTEGER NOT NULL DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(year, month)
@@ -87,6 +90,17 @@ function initSchema(db) {
       FOREIGN KEY (volunteer_id) REFERENCES volunteers(id) ON DELETE CASCADE,
       UNIQUE(date, shift, role, is_trainee)
     );
+
+    CREATE TABLE IF NOT EXISTS schedule_versions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      schedule_id INTEGER NOT NULL,
+      version INTEGER NOT NULL,
+      assignments TEXT NOT NULL,
+      warnings TEXT NOT NULL DEFAULT '[]',
+      published_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE,
+      UNIQUE(schedule_id, version)
+    );
   `);
 
   // Migration check: ensure is_trainee and allowed_shift columns exist on existing DB
@@ -101,6 +115,18 @@ function initSchema(db) {
     const hasAllowedShift = volInfo.some(col => col.name === 'allowed_shift');
     if (!hasAllowedShift) {
       db.exec(`ALTER TABLE volunteers ADD COLUMN allowed_shift TEXT DEFAULT 'ALL'`);
+    }
+
+    const scheduleInfo = db.prepare(`PRAGMA table_info(schedules)`).all();
+    const scheduleColumns = new Set(scheduleInfo.map(column => column.name));
+    if (!scheduleColumns.has('locked_slots')) {
+      db.exec(`ALTER TABLE schedules ADD COLUMN locked_slots TEXT NOT NULL DEFAULT '[]'`);
+    }
+    if (!scheduleColumns.has('warnings')) {
+      db.exec(`ALTER TABLE schedules ADD COLUMN warnings TEXT NOT NULL DEFAULT '[]'`);
+    }
+    if (!scheduleColumns.has('published_version')) {
+      db.exec(`ALTER TABLE schedules ADD COLUMN published_version INTEGER NOT NULL DEFAULT 0`);
     }
   } catch (err) {
     console.error('Migration error:', err);

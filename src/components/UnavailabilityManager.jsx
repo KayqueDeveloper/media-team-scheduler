@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   Clock, 
   Calendar, 
@@ -17,7 +17,8 @@ export const UnavailabilityManager = ({
   sundays,
   shifts,
   onAddUnavailability,
-  onRemoveUnavailability
+  onRemoveUnavailability,
+  disabled = false
 }) => {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedVolId, setSelectedVolId] = useState('');
@@ -32,18 +33,22 @@ export const UnavailabilityManager = ({
     }, {});
   }, [volunteers]);
 
-  const handleCreateUnavailability = (e) => {
+  useEffect(() => {
+    setSelectedDate(sundays[0]?.date || '');
+  }, [sundays]);
+
+  const handleCreateUnavailability = async (e) => {
     e.preventDefault();
     if (!selectedVolId || !selectedDate) return;
 
-    onAddUnavailability({
-      id: `un-${Date.now()}`,
+    const saved = await onAddUnavailability({
       volunteerId: selectedVolId,
       date: selectedDate,
       shift: selectedShift,
       reason: reason || 'Sem motivo especificado'
     });
 
+    if (!saved) return;
     setSelectedVolId('');
     setReason('');
     setIsAddModalOpen(false);
@@ -70,7 +75,7 @@ export const UnavailabilityManager = ({
           <p>Solicitações de bloqueio de datas e turnos enviadas pelos voluntários antes do fechamento da escala.</p>
         </div>
 
-        <button className="btn btn-primary" onClick={() => setIsAddModalOpen(true)}>
+        <button className="btn btn-primary" onClick={() => setIsAddModalOpen(true)} disabled={disabled}>
           <Plus size={16} />
           Registrar Indisponibilidade
         </button>
@@ -119,6 +124,7 @@ export const UnavailabilityManager = ({
                     className="btn btn-danger"
                     style={{ padding: '0.4rem 0.6rem' }}
                     onClick={() => onRemoveUnavailability(unavail.id)}
+                    disabled={disabled}
                     title="Remover Indisponibilidade"
                   >
                     <Trash2 size={16} />
@@ -197,7 +203,7 @@ export const UnavailabilityManager = ({
                 <button type="button" className="btn btn-outline" onClick={() => setIsAddModalOpen(false)}>
                   Cancelar
                 </button>
-                <button type="submit" className="btn btn-primary">
+                <button type="submit" className="btn btn-primary" disabled={disabled}>
                   Confirmar Indisponibilidade
                 </button>
               </div>

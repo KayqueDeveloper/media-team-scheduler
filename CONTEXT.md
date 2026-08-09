@@ -47,10 +47,37 @@ _Avoid_: Relatório, espelho da escala
 Critério do algoritmo que prioriza voluntários com menor histórico de alocações nos últimos meses para garantir rodízio justo.
 _Avoid_: Fila, rodízio simples, sorteio
 
+**Alocação principal**:
+Designação do voluntário N2 ou N3 que assume uma função em um turno. Toda função preenchida deve ter uma alocação principal qualificada.
+_Avoid_: Operador, responsável, titular
+
+**Treinando**:
+Voluntário N1 alocado para aprender uma função junto de um voluntário N3 que atua como mentor na mesma função e turno.
+_Avoid_: Auxiliar, sombra, substituto
+
+**Rascunho**:
+Versão da escala que ainda pode ser gerada e ajustada pelo líder, mas não é a versão oficial distribuída à equipe.
+_Avoid_: Pré-escala, escala temporária
+
+**Versão publicada**:
+Registro oficial de uma escala aprovada pelo líder. Cada nova publicação preserva a versão anterior para consulta histórica.
+_Avoid_: Edição final, escala definitiva
+
+**Data de corte**:
+Dia 25 do mês anterior ao mês da escala, até quando indisponibilidades podem ser registradas para consideração pelo gerador.
+_Avoid_: Prazo final, fechamento informal
+
+**Voluntário ativo**:
+Voluntário elegível para novas alocações.
+_Avoid_: Disponível, habilitado
+
+**Voluntário inativo**:
+Voluntário preservado no histórico, mas inelegível para novas alocações até ser reativado.
+_Avoid_: Excluído, removido
+
 
 ## Fases de Desenvolvimento
 
-- **Fase 1**: Painel Administrativo do Líder (Gerador de Escala Inteligente + Gestão de Voluntários/Proficiências + Exportador PDF).
+- **Fase 1**: Painel Administrativo do Líder com persistência centralizada, gestão de voluntários/proficiências, registro de indisponibilidades, geração com revisão, publicação versionada e exportação oficial em PDF.
 - **Fase 2**: Portal do Voluntário (Autenticação + Auto-gestão de Indisponibilidades + Trocas de Escala).
-
 

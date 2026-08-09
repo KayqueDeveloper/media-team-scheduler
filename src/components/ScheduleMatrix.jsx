@@ -29,7 +29,8 @@ export const ScheduleMatrix = ({
   lockedSlots = [],
   onScheduleChange,
   onGenerateAuto,
-  onToggleLockSlot
+  onToggleLockSlot,
+  readOnly = false
 }) => {
   const [viewMode, setViewMode] = useState('table'); // 'table' (Official PDF style) | 'grid' (Interactive Cards)
 
@@ -79,13 +80,13 @@ export const ScheduleMatrix = ({
       <div className="matrix-header-info">
         <div className="matrix-title">
           <h2>Matriz da Escala Mensal</h2>
-          <p>Escala de Cultos Dominicais × Turnos × 6 Funções de Transmissão (com Treinamento N1 & Ops N2+)</p>
+          <p>Alocações principais N2/N3 e treinamento N1 acompanhado exclusivamente por mentor N3.</p>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
           {/* Action button inside Matrix header */}
           {onGenerateAuto && (
-            <button className="btn btn-secondary" onClick={onGenerateAuto} title="Preencher ou recalcular vagas e treinandos N1 via algoritmo IA">
+            <button className="btn btn-secondary" onClick={onGenerateAuto} disabled={readOnly} title="Preencher ou recalcular a proposta pelo gerador do backend">
               <Sparkles size={16} />
               Gerar Escala (IA)
             </button>
@@ -158,7 +159,7 @@ export const ScheduleMatrix = ({
                           const profLevel = volObj ? (volObj.proficiencies[role.id] || 0) : 0;
 
                           const traineeObj = volunteersMap[currentTraineeId];
-                          const canHaveTrainee = profLevel >= 2;
+                          const canHaveTrainee = profLevel === 3;
 
                           const mainUnavailable = isUnavailable(currentVolId, sunday.date, shiftItem.id);
                           const mainDoubleBooked = isDoubleBooked(currentVolId, sunday.date, shiftItem.id);
@@ -174,6 +175,7 @@ export const ScheduleMatrix = ({
                                   <button
                                     type="button"
                                     onClick={() => onToggleLockSlot && onToggleLockSlot(sunday.date, shiftItem.id, role.id)}
+                                    disabled={readOnly}
                                     style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: isLocked ? 'var(--accent-amber)' : 'var(--text-dim)', padding: '2px 4px' }}
                                     title={isLocked ? 'Vaga travada (fixa durante a geração automática)' : 'Vaga livre (clique para travar)'}
                                   >
@@ -184,9 +186,10 @@ export const ScheduleMatrix = ({
                                     className="volunteer-select-table"
                                     value={currentVolId}
                                     onChange={(e) => onScheduleChange(sunday.date, shiftItem.id, role.id, e.target.value, 'main')}
+                                    disabled={readOnly}
                                   >
                                     <option value="">-- Vago --</option>
-                                    {volunteers.map(v => {
+                                    {volunteers.filter(v => String(v.id) === String(currentVolId) || (v.active && Number(v.proficiencies?.[role.id] || 0) >= 2)).map(v => {
                                       const vUnavail = isUnavailable(v.id, sunday.date, shiftItem.id);
                                       const vLevel = v.proficiencies[role.id] || 0;
                                       return (
@@ -226,12 +229,12 @@ export const ScheduleMatrix = ({
                                       background: currentTraineeId ? 'rgba(56, 189, 248, 0.1)' : undefined
                                     }}
                                     value={currentTraineeId}
-                                    disabled={!canHaveTrainee && !currentVolId}
+                                    disabled={readOnly || !canHaveTrainee}
                                     onChange={(e) => onScheduleChange(sunday.date, shiftItem.id, role.id, e.target.value, 'trainee')}
-                                    title={canHaveTrainee ? 'Selecione um voluntário N1 para treinar' : 'Treinamento requer operador principal N2 ou N3'}
+                                    title={canHaveTrainee ? 'Selecione um voluntário N1 para treinar' : 'Treinamento requer mentor N3'}
                                   >
-                                    <option value="">-- {canHaveTrainee ? 'Sem Treinando' : 'Requer Op N2+'} --</option>
-                                    {volunteers.map(v => {
+                                    <option value="">-- {canHaveTrainee ? 'Sem Treinando' : 'Requer mentor N3'} --</option>
+                                    {volunteers.filter(v => String(v.id) === String(currentTraineeId) || (v.active && Number(v.proficiencies?.[role.id] || 0) === 1)).map(v => {
                                       if (v.id === currentVolId) return null;
                                       const vLevel = v.proficiencies[role.id] || 0;
                                       const vUnavail = isUnavailable(v.id, sunday.date, shiftItem.id);
@@ -292,7 +295,7 @@ export const ScheduleMatrix = ({
                         const { main: currentVolId, trainee: currentTraineeId } = getSlotAssignment(schedule, sunday.date, shift.id, role.id);
                         const volObj = volunteersMap[currentVolId];
                         const profLevel = volObj ? (volObj.proficiencies[role.id] || 0) : 0;
-                        const canHaveTrainee = profLevel >= 2;
+                        const canHaveTrainee = profLevel === 3;
                         
                         const mainUnavailable = isUnavailable(currentVolId, sunday.date, shift.id);
                         const mainDoubleBooked = isDoubleBooked(currentVolId, sunday.date, shift.id);
@@ -308,6 +311,7 @@ export const ScheduleMatrix = ({
                                 <button
                                   type="button"
                                   onClick={() => onToggleLockSlot && onToggleLockSlot(sunday.date, shift.id, role.id)}
+                                  disabled={readOnly}
                                   style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: isLocked ? 'var(--accent-amber)' : 'var(--text-dim)', padding: 0 }}
                                   title={isLocked ? 'Vaga travada (fixa durante a geração automática)' : 'Vaga livre (clique para travar)'}
                                 >
@@ -330,9 +334,10 @@ export const ScheduleMatrix = ({
                                 className="volunteer-select"
                                 value={currentVolId}
                                 onChange={(e) => onScheduleChange(sunday.date, shift.id, role.id, e.target.value, 'main')}
+                                disabled={readOnly}
                               >
                                 <option value="">-- Selecionar Operador --</option>
-                                {volunteers.map(v => (
+                                {volunteers.filter(v => String(v.id) === String(currentVolId) || (v.active && Number(v.proficiencies?.[role.id] || 0) >= 2)).map(v => (
                                   <option key={v.id} value={v.id}>
                                     {v.name} (Nível {v.proficiencies[role.id] || 0})
                                   </option>
@@ -351,11 +356,11 @@ export const ScheduleMatrix = ({
                                   fontSize: '0.8rem'
                                 }}
                                 value={currentTraineeId}
-                                disabled={!canHaveTrainee && !currentVolId}
+                                disabled={readOnly || !canHaveTrainee}
                                 onChange={(e) => onScheduleChange(sunday.date, shift.id, role.id, e.target.value, 'trainee')}
                               >
-                                <option value="">-- {canHaveTrainee ? 'Selecionar Treinando (N1)' : 'Requer Op N2+ para treino'} --</option>
-                                {volunteers.map(v => {
+                                <option value="">-- {canHaveTrainee ? 'Selecionar Treinando (N1)' : 'Requer mentor N3'} --</option>
+                                {volunteers.filter(v => String(v.id) === String(currentTraineeId) || (v.active && Number(v.proficiencies?.[role.id] || 0) === 1)).map(v => {
                                   if (v.id === currentVolId) return null;
                                   const vLevel = v.proficiencies[role.id] || 0;
                                   return (
@@ -391,4 +396,3 @@ export const ScheduleMatrix = ({
     </section>
   );
 };
-

@@ -44,12 +44,12 @@ async function runTests() {
   }
   console.log(`[PASS] Updated volunteer name to: ${updatedVol.name}`);
 
-  // Delete volunteer
-  const deleted = repository.deleteVolunteer(newVol.id);
-  if (!deleted || repository.getVolunteerById(newVol.id) !== null) {
-    throw new Error('Volunteer deletion failed');
+  // Archive volunteer while preserving history
+  const archived = repository.deleteVolunteer(newVol.id);
+  if (!archived || archived.active !== false || repository.getVolunteerById(newVol.id) === null) {
+    throw new Error('Volunteer archival failed');
   }
-  console.log(`[PASS] Deleted volunteer ID: ${newVol.id}`);
+  console.log(`[PASS] Archived volunteer ID: ${newVol.id}`);
 
   // 3. Verify Proficiencies
   console.log('\n--- Test 3: Proficiencies CRUD & Level Validation ---');
@@ -73,11 +73,11 @@ async function runTests() {
 
   // 5. Verify Schedules & Assignments
   console.log('\n--- Test 5: Schedules & Assignments ---');
-  const pastSchedule = repository.getScheduleByMonthYear(2026, 7);
+  const pastSchedule = repository.getScheduleByMonthYear(2026, 9);
   if (!pastSchedule) {
-    throw new Error('July 2026 schedule not found');
+    throw new Error('September 2026 schedule not found');
   }
-  console.log(`[PASS] Retrieved July 2026 Schedule (Status: ${pastSchedule.status}, Assignments: ${pastSchedule.assignments.length})`);
+  console.log(`[PASS] Retrieved September 2026 Schedule (Status: ${pastSchedule.status}, Assignments: ${pastSchedule.assignments.length})`);
 
   // Test creating new August Schedule
   const augSchedule = repository.createSchedule({ year: 2026, month: 8, status: SCHEDULE_STATUS.DRAFT });
@@ -98,7 +98,7 @@ async function runTests() {
   console.log(`[PASS] Past assignments for ${firstVol.name}: ${pastVolAssignments.length}`);
 
   // Update schedule status
-  const publishedAug = repository.updateScheduleStatus(augSchedule.id, SCHEDULE_STATUS.PUBLISHED);
+  const publishedAug = repository.publishSchedule(augSchedule.id);
   if (publishedAug.status !== SCHEDULE_STATUS.PUBLISHED) {
     throw new Error('Schedule status update failed');
   }

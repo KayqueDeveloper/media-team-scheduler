@@ -1,0 +1,3 @@
+# Regras de Cobertura e Fallback do Gerador
+
+O gerador deve priorizar uma distribuição equitativa, mas pode usar domingos consecutivos para buscar uma escala completa. O limite mensal será 2 alocações em meses com até 4 domingos e 3 em meses com 5 domingos, usando a terceira alocação somente quando necessária. Toda alocação principal exige proficiência N2 ou N3; um N1 só pode aparecer como treinando acompanhado por um N3, e essa participação conta para os limites do voluntário. Se ainda houver vagas descobertas, o sistema exibirá alertas e permitirá que o líder publique mediante confirmação explícita, sem criar uma qualificação inexistente.

@@ -24,11 +24,11 @@ function createMockVolunteers(count = 30) {
     const id = `v${i}`;
     volunteers.push({ id, name: `Volunteer ${i}` });
 
-    // Assign proficiencies across 6 roles
+    // Keep enough qualified principals for complete schedules while retaining N1 trainees.
     DEFAULT_ROLES.forEach((role, rIndex) => {
-      let level = 1;
-      if (i % 3 === 0) level = 2; // Level 2 for 1/3 of volunteers
-      if (i % 5 === 0) level = 3; // Level 3 for 1/5 of volunteers
+      let level = 2;
+      if (i % 5 === 0) level = 1;
+      if (i % 7 === 0) level = 3;
       proficiencies.push({ volunteerId: id, role, level });
     });
   }
@@ -99,6 +99,38 @@ describe('Scheduler Constraint Engine - 4 vs 5 Sundays', () => {
 });
 
 describe('Hard Constraints Enforcement', () => {
+  test('assigns only N2 or N3 volunteers as principals in every function', () => {
+    const volunteers = [
+      { id: 'a-n1', name: 'N1 Freehand' },
+      { id: 'b-freehand', name: 'N2 Freehand' },
+      { id: 'c-freehand', name: 'N2 Freehand 2' },
+      { id: 'd-vmix', name: 'N2 vMix' },
+      { id: 'e-vmix', name: 'N2 vMix 2' }
+    ];
+    const proficiencies = [
+      { volunteerId: 'a-n1', role: 'FREEHAND', level: 1 },
+      { volunteerId: 'b-freehand', role: 'FREEHAND', level: 2 },
+      { volunteerId: 'c-freehand', role: 'FREEHAND', level: 2 },
+      { volunteerId: 'd-vmix', role: 'VMIX', level: 2 },
+      { volunteerId: 'e-vmix', role: 'VMIX', level: 2 }
+    ];
+
+    const result = generateSchedule({
+      year: 2026,
+      month: 9,
+      volunteers,
+      proficiencies,
+      roles: ['FREEHAND', 'VMIX'],
+      shifts: ['MORNING']
+    });
+
+    assert.equal(result.success, true);
+    assert.ok(result.schedule.length > 0);
+    result.schedule.forEach(assignment => {
+      assert.ok(assignment.proficiencyLevel >= 2);
+    });
+  });
+
   test('Enforces 1 volunteer per role per shift (6 roles x 2 shifts)', () => {
     const { volunteers, proficiencies } = createMockVolunteers(30);
     const result = generateSchedule({ year: 2026, month: 8, volunteers, proficiencies });
@@ -117,7 +149,7 @@ describe('Hard Constraints Enforcement', () => {
     });
   });
 
-  test('Enforces Volunteer Proficiency >= 1 for non-critical roles and >= 2 for critical roles (ADR 0002)', () => {
+  test('Enforces Volunteer Proficiency >= 2 for every principal function (ADR 0010)', () => {
     const { volunteers, proficiencies } = createMockVolunteers(30);
 
     const result = generateSchedule({
@@ -129,11 +161,8 @@ describe('Hard Constraints Enforcement', () => {
 
     assert.equal(result.success, true);
     
-    // Check all VMIX and SWITCHER assignments have proficiency level >= 2
     result.schedule.forEach(s => {
-      if (s.role === 'VMIX' || s.role === 'SWITCHER') {
-        assert.ok(s.proficiencyLevel >= 2, `Critical role ${s.role} assigned to volunteer ${s.volunteerId} with proficiency level ${s.proficiencyLevel} < 2`);
-      }
+      assert.ok(s.proficiencyLevel >= 2, `${s.role} assigned to ${s.volunteerId} below N2`);
     });
   });
 
@@ -192,7 +221,7 @@ describe('Hard Constraints Enforcement', () => {
     assert.equal(v1FirstSundayAssignments.length, 0);
   });
 
-  test('Enforces Max 2 assignments per month per volunteer', () => {
+  test('Enforces Max 3 assignments in a five-Sunday month, using the third only when needed', () => {
     const { volunteers, proficiencies } = createMockVolunteers(30);
     const result = generateSchedule({ year: 2026, month: 8, volunteers, proficiencies });
 
@@ -204,8 +233,9 @@ describe('Hard Constraints Enforcement', () => {
     });
 
     for (const [vId, count] of counts.entries()) {
-      assert.ok(count <= 2, `Volunteer ${vId} exceeded max 2 assignments (got ${count})`);
+      assert.ok(count <= 3, `Volunteer ${vId} exceeded max 3 assignments (got ${count})`);
     }
+    assert.equal(result.metrics.monthlyLimitUsed, 3);
   });
 
   test('Honors registered unavailabilities (ADR 0005)', () => {
@@ -288,7 +318,30 @@ describe('Soft Constraints Enforcement', () => {
 });
 
 describe('Error Handling and Edge Cases', () => {
-  test('Returns failure object when volunteer pool is too small to cover slots', () => {
+  test('returns the best partial schedule with vacancies and warnings when full coverage is impossible', () => {
+    const volunteers = [{ id: 'only-n2', name: 'Only N2' }];
+    const proficiencies = [
+      { volunteerId: 'only-n2', role: 'FREEHAND', level: 2 }
+    ];
+
+    const result = generateSchedule({
+      year: 2026,
+      month: 9,
+      volunteers,
+      proficiencies,
+      roles: ['FREEHAND'],
+      shifts: ['MORNING']
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.schedule.length, 2);
+    assert.equal(result.vacancies.length, 2);
+    assert.equal(result.metrics.assignedSlots, 2);
+    assert.equal(result.metrics.totalSlots, 4);
+    assert.ok(result.warnings.length > 0);
+  });
+
+  test('Returns a partial success when volunteer pool is too small to cover slots', () => {
     const volunteers = [
       { id: 'v1', name: 'Vol 1' },
       { id: 'v2', name: 'Vol 2' }
@@ -299,8 +352,9 @@ describe('Error Handling and Edge Cases', () => {
     });
 
     const result = generateSchedule({ year: 2026, month: 9, volunteers, proficiencies });
-    assert.equal(result.success, false);
-    assert.ok(result.errors.length > 0);
+    assert.equal(result.success, true);
+    assert.equal(result.complete, false);
+    assert.ok(result.vacancies.length > 0);
   });
 
   test('Throws descriptive error if year or month missing', () => {
@@ -308,8 +362,45 @@ describe('Error Handling and Edge Cases', () => {
   });
 });
 
-describe('Trainee Scheduling Feature (N1 with N2+ mentor)', () => {
-  test('Assigns N1 trainees ONLY when main volunteer is N2 or N3 (at least N2)', () => {
+describe('Trainee Scheduling Feature (N1 with N3 mentor)', () => {
+  test('assigns an N1 trainee only beside an N3 principal in the same slot', () => {
+    const volunteers = [
+      { id: 'a-n2', name: 'N2 A' },
+      { id: 'b-n2', name: 'N2 B' },
+      { id: 'c-n3', name: 'N3 C' },
+      { id: 'd-n3', name: 'N3 D' },
+      { id: 'e-n1', name: 'N1 E' },
+      { id: 'f-n1', name: 'N1 F' }
+    ];
+    const proficiencies = volunteers.map(volunteer => ({
+      volunteerId: volunteer.id,
+      role: 'FREEHAND',
+      level: Number(volunteer.id.slice(3))
+    }));
+
+    const result = generateSchedule({
+      year: 2026,
+      month: 9,
+      volunteers,
+      proficiencies,
+      roles: ['FREEHAND'],
+      shifts: ['MORNING']
+    });
+
+    assert.ok(result.trainees.length > 0);
+    result.trainees.forEach(trainee => {
+      const principal = result.schedule.find(assignment =>
+        assignment.date === trainee.date &&
+        assignment.shift === trainee.shift &&
+        assignment.role === trainee.role
+      );
+      assert.equal(principal.proficiencyLevel, 3);
+      assert.equal(trainee.proficiencyLevel, 1);
+      assert.equal(trainee.trainerId, principal.volunteerId);
+    });
+  });
+
+  test('Assigns N1 trainees ONLY when the principal volunteer is N3', () => {
     const { volunteers, proficiencies } = createMockVolunteers(30);
 
     const result = generateSchedule({ year: 2026, month: 8, volunteers, proficiencies });
@@ -323,7 +414,7 @@ describe('Trainee Scheduling Feature (N1 with N2+ mentor)', () => {
       // Find main operator assigned to this slot
       const mainSlot = result.schedule.find(s => s.date === t.date && s.shift === t.shift && s.role === t.role);
       assert.ok(mainSlot, 'Main operator slot must exist');
-      assert.ok(mainSlot.proficiencyLevel >= 2, `Main operator proficiency must be >= 2 (got ${mainSlot.proficiencyLevel})`);
+      assert.equal(mainSlot.proficiencyLevel, 3, `Principal proficiency must be N3 (got ${mainSlot.proficiencyLevel})`);
       assert.notEqual(t.volunteerId, mainSlot.volunteerId, 'Trainee cannot be the main volunteer');
     });
   });
@@ -376,5 +467,31 @@ describe('Trainee Scheduling Feature (N1 with N2+ mentor)', () => {
       assert.ok(count <= 1, `Volunteer/Date ${key} assigned ${count} times on the same date`);
     }
   });
-});
 
+  test('counts trainee participation toward the two-assignment limit in a four-Sunday month', () => {
+    const volunteers = [
+      { id: 'n1', name: 'Trainee' },
+      { id: 'n3-a', name: 'Mentor A' },
+      { id: 'n3-b', name: 'Mentor B' }
+    ];
+    const proficiencies = [
+      { volunteerId: 'n1', role: 'FREEHAND', level: 1 },
+      { volunteerId: 'n3-a', role: 'FREEHAND', level: 3 },
+      { volunteerId: 'n3-b', role: 'FREEHAND', level: 3 }
+    ];
+
+    const result = generateSchedule({
+      year: 2026,
+      month: 9,
+      volunteers,
+      proficiencies,
+      roles: ['FREEHAND'],
+      shifts: ['MORNING'],
+      force: true
+    });
+
+    const n1Participations = result.schedule.filter(item => item.volunteerId === 'n1').length +
+      result.trainees.filter(item => item.volunteerId === 'n1').length;
+    assert.equal(n1Participations, 2);
+  });
+});

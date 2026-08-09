@@ -7,7 +7,10 @@
     "dev": "vite",
     "server": "node server/index.js",
     "seed": "node server/db/seed.js",
-    "test": "node --test server/solver/scheduler.test.js",
+    "test": "node --test --test-reporter=spec --test-concurrency=1 server/solver/scheduler.test.js server/api.test.js src/api/client.test.js",
+    "test:solver": "node --test server/solver/scheduler.test.js",
+    "test:api": "node --test --test-concurrency=1 server/api.test.js src/api/client.test.js",
+    "test:db": "node server/db/test.js",
     "build": "vite build",
     "preview": "vite preview"
   },

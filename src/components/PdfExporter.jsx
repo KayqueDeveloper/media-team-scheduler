@@ -11,9 +11,20 @@ export const PdfExporter = ({
   shifts,
   roles,
   monthLabel = 'Setembro 2026',
-  status = 'published'
+  status = 'published',
+  version = null,
+  versions = []
 }) => {
   const [isExporting, setIsExporting] = useState(false);
+  const [selectedVersion, setSelectedVersion] = useState('current');
+  const selectedSnapshot = versions.find(item => String(item.version) === selectedVersion);
+  const displaySchedule = selectedSnapshot?.matrix || schedule;
+  const displayVersion = selectedSnapshot?.version || version;
+  const isOfficial = Boolean(selectedSnapshot) || status === 'published';
+
+  React.useEffect(() => {
+    setSelectedVersion('current');
+  }, [monthLabel, version]);
 
   const volunteersMap = React.useMemo(() => {
     return volunteers.reduce((acc, v) => {
@@ -21,16 +32,22 @@ export const PdfExporter = ({
       return acc;
     }, {});
   }, [volunteers]);
+  const displayVolunteersMap = React.useMemo(() => ({
+    ...volunteersMap,
+    ...(selectedSnapshot?.volunteerNames || {})
+  }), [volunteersMap, selectedSnapshot]);
 
   const handleDownloadPdf = async () => {
     setIsExporting(true);
-    const filename = `escala-transmissao-${monthLabel.toLowerCase().replace(/\s+/g, '-')}.pdf`;
+    const prefix = isOfficial ? 'escala-transmissao' : 'previa-rascunho-escala-transmissao';
+    const versionSuffix = isOfficial && displayVersion ? `-v${displayVersion}` : '';
+    const filename = `${prefix}-${monthLabel.toLowerCase().replace(/\s+/g, '-')}${versionSuffix}.pdf`;
     await exportToPdf('pdf-printable-document', filename);
     setIsExporting(false);
   };
 
   const handleWhatsAppShare = () => {
-    shareToWhatsApp(schedule, volunteersMap, sundays, roles, monthLabel);
+    if (isOfficial) shareToWhatsApp(displaySchedule, displayVolunteersMap, sundays, roles, monthLabel);
   };
 
   const handlePrint = () => {
@@ -47,8 +64,23 @@ export const PdfExporter = ({
           <div>
             <h2 style={{ fontSize: '1.25rem' }}>Exportação da Escala de Transmissão</h2>
             <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-              Layout idêntico ao modelo oficial da igreja para impressão em PDF A4 ou compartilhamento no grupo do WhatsApp.
+              {isOfficial
+                ? 'Versão oficial publicada, liberada para impressão, PDF A4 e compartilhamento.'
+                : 'Prévia identificada do rascunho. Publique a escala para liberar a distribuição oficial.'}
             </p>
+            {versions.length > 0 && (
+              <label className="version-selector">
+                Versão exibida
+                <select value={selectedVersion} onChange={event => setSelectedVersion(event.target.value)}>
+                  <option value="current">Estado atual ({status === 'published' ? `oficial v${version}` : 'rascunho'})</option>
+                  {versions.map(item => (
+                    <option key={item.version} value={String(item.version)}>
+                      Publicação v{item.version}{item.publishedAt ? ` · ${item.publishedAt}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
           </div>
 
           <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
@@ -57,14 +89,14 @@ export const PdfExporter = ({
               Imprimir
             </button>
 
-            <button className="btn btn-success" onClick={handleWhatsAppShare}>
+            <button className="btn btn-success" onClick={handleWhatsAppShare} disabled={!isOfficial} title={!isOfficial ? 'Disponível somente após a publicação' : undefined}>
               <MessageCircle size={16} />
               Enviar no WhatsApp
             </button>
 
             <button className="btn btn-primary" onClick={handleDownloadPdf} disabled={isExporting}>
               <Download size={16} />
-              {isExporting ? 'Gerando PDF...' : 'Baixar PDF A4'}
+              {isExporting ? 'Gerando PDF...' : isOfficial ? 'Baixar PDF oficial' : 'Baixar prévia em PDF'}
             </button>
           </div>
         </div>
@@ -72,6 +104,7 @@ export const PdfExporter = ({
 
       {/* Printable Element - Exact Replica of Reference PDF Layout */}
       <div id="pdf-printable-document" className="pdf-printable-area">
+        {!isOfficial && <div className="pdf-draft-watermark">PRÉVIA · RASCUNHO · NÃO DISTRIBUIR</div>}
         {/* Top Banner Header */}
         <div className="pdf-banner-header">
           ESCALA COMPLETA TRANSMISSÃO | {extractedMonth}
@@ -98,9 +131,9 @@ export const PdfExporter = ({
                   <tr>
                     <td className="td-date-shift">{shortDate} - MANHÃ</td>
                     {roles.map(role => {
-                      const { main: volId, trainee: traineeId } = getSlotAssignment(schedule, sunday.date, 'MORNING', role.id);
-                      const volName = volId ? (volunteersMap[volId]?.name || 'Não alocado') : '';
-                      const traineeName = traineeId ? volunteersMap[traineeId]?.name : null;
+                      const { main: volId, trainee: traineeId } = getSlotAssignment(displaySchedule, sunday.date, 'MORNING', role.id);
+                      const volName = volId ? (displayVolunteersMap[volId]?.name || 'Não alocado') : '';
+                      const traineeName = traineeId ? displayVolunteersMap[traineeId]?.name : null;
                       return (
                         <td key={role.id} className="td-volunteer-cell">
                           <div>{volName}</div>
@@ -118,9 +151,9 @@ export const PdfExporter = ({
                   <tr>
                     <td className="td-date-shift">{shortDate} - NOITE</td>
                     {roles.map(role => {
-                      const { main: volId, trainee: traineeId } = getSlotAssignment(schedule, sunday.date, 'NIGHT', role.id);
-                      const volName = volId ? (volunteersMap[volId]?.name || 'Não alocado') : '';
-                      const traineeName = traineeId ? volunteersMap[traineeId]?.name : null;
+                      const { main: volId, trainee: traineeId } = getSlotAssignment(displaySchedule, sunday.date, 'NIGHT', role.id);
+                      const volName = volId ? (displayVolunteersMap[volId]?.name || 'Não alocado') : '';
+                      const traineeName = traineeId ? displayVolunteersMap[traineeId]?.name : null;
                       return (
                         <td key={role.id} className="td-volunteer-cell">
                           <div>{volName}</div>
@@ -148,7 +181,7 @@ export const PdfExporter = ({
 
         <div className="pdf-footer-note">
           <span>Equipe de Transmissão & Mídia</span>
-          <span>Status: {status === 'published' ? 'OFICIAL' : 'RASCUNHO'}</span>
+          <span>Status: {isOfficial ? `OFICIAL${displayVersion ? ` · VERSÃO ${displayVersion}` : ''}` : 'PRÉVIA DE RASCUNHO'}</span>
         </div>
       </div>
     </div>
