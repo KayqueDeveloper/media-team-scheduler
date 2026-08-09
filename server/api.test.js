@@ -8,11 +8,15 @@ import test from 'node:test';
 import { createApp } from './index.js';
 
 async function createHttpFixture(options = {}) {
-  const directory = await mkdtemp(path.join(os.tmpdir(), 'media-scheduler-api-'));
+  const { databasePath, ...appOptions } = options;
+  const ownsDirectory = !databasePath;
+  const directory = ownsDirectory
+    ? await mkdtemp(path.join(os.tmpdir(), 'media-scheduler-api-'))
+    : path.dirname(databasePath);
   const app = createApp({
-    dbPath: path.join(directory, 'test.sqlite'),
+    dbPath: databasePath || path.join(directory, 'test.sqlite'),
     now: () => new Date('2026-06-20T12:00:00Z'),
-    ...options
+    ...appOptions
   });
   const server = app.listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -31,11 +35,33 @@ async function createHttpFixture(options = {}) {
   async function cleanup() {
     await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     app.locals.closeDatabase();
-    await rm(directory, { recursive: true, force: true });
+    if (ownsDirectory) await rm(directory, { recursive: true, force: true });
   }
 
   return { request, cleanup };
 }
+
+test('HTTP API preserves administrative data after a server restart', async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'media-scheduler-restart-'));
+  const databasePath = path.join(directory, 'persistent.sqlite');
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const firstServer = await createHttpFixture({ databasePath });
+  const created = await firstServer.request('POST', '/api/volunteers', {
+    name: 'Persistente',
+    proficiencies: { VMIX: 2 }
+  });
+  assert.equal(created.status, 201);
+  await firstServer.cleanup();
+
+  const restartedServer = await createHttpFixture({ databasePath });
+  t.after(restartedServer.cleanup);
+  const volunteers = await restartedServer.request('GET', '/api/volunteers');
+  assert.equal(volunteers.status, 200);
+  assert.equal(volunteers.body.length, 1);
+  assert.equal(volunteers.body[0].name, 'Persistente');
+  assert.deepEqual(volunteers.body[0].proficiencies, { VMIX: 2 });
+});
 
 test('HTTP API updates and archives a volunteer without deleting its history', async t => {
   const fixture = await createHttpFixture();
@@ -204,6 +230,15 @@ test('HTTP API persists a draft and preserves immutable publication versions', a
   });
   assert.equal(unconfirmed.status, 422);
   assert.equal(unconfirmed.body.code, 'WARNINGS_REQUIRE_CONFIRMATION');
+
+  await fixture.request('PUT', `/api/volunteers/${mentor.body.id}`, { active: false });
+  const invalidPublication = await fixture.request('POST', `/api/schedule/${scheduleId}/publish`, {
+    warnings: ['47 vagas sem cobertura'],
+    confirmedWarnings: true
+  });
+  assert.equal(invalidPublication.status, 422);
+  assert.equal(invalidPublication.body.code, 'INVALID_ASSIGNMENTS');
+  await fixture.request('PUT', `/api/volunteers/${mentor.body.id}`, { active: true });
 
   const published = await fixture.request('POST', `/api/schedule/${scheduleId}/publish`, {
     warnings: ['47 vagas sem cobertura'],

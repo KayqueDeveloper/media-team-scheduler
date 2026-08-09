@@ -16,15 +16,18 @@ export const PdfExporter = ({
   versions = []
 }) => {
   const [isExporting, setIsExporting] = useState(false);
-  const [selectedVersion, setSelectedVersion] = useState('current');
+  const hasPublishedSnapshot = versions.some(item => Number(item.version) === Number(version));
+  const [selectedVersion, setSelectedVersion] = useState(() =>
+    status === 'published' && version ? String(version) : 'current'
+  );
   const selectedSnapshot = versions.find(item => String(item.version) === selectedVersion);
   const displaySchedule = selectedSnapshot?.matrix || schedule;
   const displayVersion = selectedSnapshot?.version || version;
   const isOfficial = Boolean(selectedSnapshot) || status === 'published';
 
   React.useEffect(() => {
-    setSelectedVersion('current');
-  }, [monthLabel, version]);
+    setSelectedVersion(status === 'published' && hasPublishedSnapshot ? String(version) : 'current');
+  }, [monthLabel, status, version, hasPublishedSnapshot]);
 
   const volunteersMap = React.useMemo(() => {
     return volunteers.reduce((acc, v) => {
@@ -72,7 +75,9 @@ export const PdfExporter = ({
               <label className="version-selector">
                 Versão exibida
                 <select value={selectedVersion} onChange={event => setSelectedVersion(event.target.value)}>
-                  <option value="current">Estado atual ({status === 'published' ? `oficial v${version}` : 'rascunho'})</option>
+                  {(status !== 'published' || !hasPublishedSnapshot) && (
+                    <option value="current">Estado atual ({status === 'published' ? 'publicação sem snapshot' : 'rascunho'})</option>
+                  )}
                   {versions.map(item => (
                     <option key={item.version} value={String(item.version)}>
                       Publicação v{item.version}{item.publishedAt ? ` · ${item.publishedAt}` : ''}

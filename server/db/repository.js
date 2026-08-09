@@ -455,14 +455,35 @@ export function getAssignmentsByScheduleId(scheduleId) {
 
 export function getAssignmentsByDateRange(startDate, endDate) {
   const db = getDatabase();
-  return db.prepare(`
+  const latestVersions = db.prepare(`
+    SELECT sv.schedule_id, sv.assignments
+    FROM schedule_versions sv
+    JOIN (
+      SELECT schedule_id, MAX(version) AS version
+      FROM schedule_versions
+      GROUP BY schedule_id
+    ) latest ON latest.schedule_id = sv.schedule_id AND latest.version = sv.version
+  `).all();
+  const versionedScheduleIds = new Set(latestVersions.map(row => row.schedule_id));
+  const versionAssignments = latestVersions.flatMap(row => parseJsonArray(row.assignments))
+    .filter(assignment => assignment.date >= startDate && assignment.date < endDate);
+
+  const currentPublishedAssignments = db.prepare(`
     SELECT a.*, v.name as volunteer_name
     FROM assignments a
     JOIN volunteers v ON a.volunteer_id = v.id
     JOIN schedules s ON a.schedule_id = s.id
     WHERE a.date >= ? AND a.date < ? AND s.status = 'PUBLISHED'
     ORDER BY a.date ASC, a.shift ASC, a.role ASC
-  `).all(startDate, endDate);
+  `).all(startDate, endDate)
+    .filter(assignment => !versionedScheduleIds.has(assignment.schedule_id));
+
+  return [...versionAssignments, ...currentPublishedAssignments]
+    .sort((left, right) =>
+      left.date.localeCompare(right.date) ||
+      left.shift.localeCompare(right.shift) ||
+      left.role.localeCompare(right.role)
+    );
 }
 
 export function getPastAssignmentsByVolunteerId(volunteerId, limit = 50) {

@@ -238,11 +238,26 @@ describe('Hard Constraints Enforcement', () => {
     assert.equal(result.metrics.monthlyLimitUsed, 3);
   });
 
+  test('keeps the two-participation limit when five-Sunday coverage is possible', () => {
+    const volunteers = Array.from({ length: 30 }, (_, index) => ({
+      id: `qualified-${index + 1}`,
+      name: `Qualified ${index + 1}`
+    }));
+    const proficiencies = volunteers.flatMap(volunteer =>
+      DEFAULT_ROLES.map(role => ({ volunteerId: volunteer.id, role, level: 2 }))
+    );
+
+    const result = generateSchedule({ year: 2026, month: 8, volunteers, proficiencies });
+
+    assert.equal(result.complete, true);
+    assert.equal(result.metrics.monthlyLimitUsed, 2);
+  });
+
   test('Honors registered unavailabilities (ADR 0005)', () => {
     const { volunteers, proficiencies } = createMockVolunteers(30);
     const unavailabilities = [
       { volunteerId: 'v1', date: '2026-08-02', shift: 'morning' },
-      { volunteerId: 'v2', date: '2026-08-09' } // Unavailable all day on Aug 9
+      { volunteerId: 'v2', date: '2026-08-09', shift: 'ALL' } // Unavailable all day on Aug 9
     ];
 
     const result = generateSchedule({
@@ -260,6 +275,20 @@ describe('Hard Constraints Enforcement', () => {
 
     const v2Aug9 = result.schedule.filter(s => s.volunteerId === 'v2' && s.date === '2026-08-09');
     assert.equal(v2Aug9.length, 0);
+  });
+
+  test('treats shift ALL as an all-day unavailability', () => {
+    const result = generateSchedule({
+      year: 2026,
+      month: 9,
+      volunteers: [{ id: 'only', name: 'Único voluntário' }],
+      proficiencies: [{ volunteerId: 'only', role: 'FREEHAND', level: 2 }],
+      unavailabilities: [{ volunteerId: 'only', date: '2026-09-06', shift: 'ALL' }],
+      roles: ['FREEHAND'],
+      shifts: ['MORNING']
+    });
+
+    assert.equal(result.schedule.some(assignment => assignment.date === '2026-09-06'), false);
   });
 
   test('Enforces allowedShift restriction (MORNING or NIGHT only)', () => {

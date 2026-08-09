@@ -431,6 +431,14 @@ export function createApp({
     try {
       const schedule = getScheduleById(Number(req.params.id));
       if (!schedule) return res.status(404).json({ error: 'Schedule not found.' });
+      const validation = validateDraftAssignments(schedule, schedule.assignments, schedule.lockedSlots);
+      if (validation.errors.length) {
+        return res.status(422).json({
+          error: validation.errors[0],
+          code: 'INVALID_ASSIGNMENTS',
+          details: { errors: validation.errors }
+        });
+      }
       const warnings = [...new Set([
         ...(schedule.warnings || []),
         ...(Array.isArray(req.body.warnings) ? req.body.warnings : [])
@@ -476,6 +484,16 @@ export function createApp({
     const scheduleId = parseInt(req.params.id);
     const schedule = getScheduleById(scheduleId);
     if (!schedule) return res.status(404).json({ error: 'Schedule not found.' });
+    if (status === 'PUBLISHED') {
+      const validation = validateDraftAssignments(schedule, schedule.assignments, schedule.lockedSlots);
+      if (validation.errors.length) {
+        return res.status(422).json({
+          error: validation.errors[0],
+          code: 'INVALID_ASSIGNMENTS',
+          details: { errors: validation.errors }
+        });
+      }
+    }
     const warnings = [...new Set([
       ...(schedule.warnings || []),
       ...(Array.isArray(req.body.warnings) ? req.body.warnings : [])

@@ -138,9 +138,11 @@ export function generateSchedule({
     if (!volunteerId || !date) return;
 
     unavailable.add(`${volunteerId}:${date}`);
-    if (shift) {
+    if (shift && shift !== 'ALL') {
       unavailable.delete(`${volunteerId}:${date}`);
       unavailable.add(`${volunteerId}:${date}:${shift}`);
+    } else {
+      unavailable.add(`${volunteerId}:${date}`);
     }
   });
 
@@ -355,10 +357,10 @@ export function generateSchedule({
 
   const attemptDefinitions = [
     { monthlyLimit: 2, allowConsecutiveSundays: false },
+    { monthlyLimit: 2, allowConsecutiveSundays: true },
     ...(dynamicMonthlyLimit === 3
       ? [{ monthlyLimit: 3, allowConsecutiveSundays: false }]
       : []),
-    { monthlyLimit: 2, allowConsecutiveSundays: true },
     ...(dynamicMonthlyLimit === 3
       ? [{ monthlyLimit: 3, allowConsecutiveSundays: true }]
       : [])

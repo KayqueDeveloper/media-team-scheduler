@@ -104,6 +104,13 @@ async function runTests() {
   }
   console.log(`[PASS] Updated August Schedule status to: ${publishedAug.status}`);
 
+  repository.reopenSchedule(augSchedule.id);
+  const historyAfterReopen = repository.getAssignmentsByDateRange('2026-08-01', '2026-09-01');
+  if (!historyAfterReopen.some(assignment => assignment.volunteer_id === firstVol.id)) {
+    throw new Error('Published assignment disappeared from equity history after reopening');
+  }
+  console.log('[PASS] Published history remains available after reopening the draft');
+
   // Cleanup test DB
   closeDatabase();
   if (fs.existsSync(testDbPath)) {
