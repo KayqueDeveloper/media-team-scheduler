@@ -111,6 +111,32 @@ body {
   padding: .65rem .75rem;
 }
 
+.auth-success {
+  color: var(--accent-emerald);
+  background: var(--accent-emerald-glow);
+  border: 1px solid rgba(16, 185, 129, .3);
+  border-radius: var(--radius-sm);
+  padding: .75rem;
+}
+
+.auth-result { text-align: center; }
+.auth-result .brand-icon { margin-inline: auto; }
+.auth-actions { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
+.auth-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .35rem;
+  border: 0;
+  background: transparent;
+  color: var(--primary-cyan);
+  cursor: pointer;
+  font: inherit;
+  font-size: .85rem;
+}
+.auth-divider { display: flex; align-items: center; gap: .7rem; color: var(--text-dim); font-size: .75rem; }
+.auth-divider::before, .auth-divider::after { content: ''; height: 1px; flex: 1; background: var(--border-glass); }
+
 .auth-submit {
   justify-content: center;
   margin-top: .5rem;
@@ -725,6 +751,39 @@ h1, h2, h3, h4, h5, h6 {
   padding: 1.5rem;
 }
 
+.pending-count, .tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .35rem;
+  color: var(--accent-amber);
+  background: var(--accent-amber-glow);
+  border: 1px solid rgba(245, 158, 11, .3);
+  border-radius: 999px;
+  font-size: .78rem;
+  font-weight: 700;
+  padding: .3rem .65rem;
+}
+
+.tab-count { min-width: 1.35rem; padding: .1rem .35rem; }
+.pending-manager .manager-toolbar p { color: var(--text-muted); margin-top: .25rem; }
+.pending-list { display: grid; gap: .8rem; }
+.pending-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  background: rgba(15, 23, 42, .55);
+}
+.pending-details { display: grid; gap: .2rem; min-width: 0; }
+.pending-details span, .pending-details small { color: var(--text-muted); }
+.pending-details label { display: grid; gap: .3rem; color: var(--text-muted); font-size: .82rem; }
+.pending-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .5rem; }
+.empty-state { color: var(--text-muted); padding: 1.5rem 0; text-align: center; }
+
 .manager-toolbar {
   display: flex;
   justify-content: space-between;
@@ -992,6 +1051,10 @@ h1, h2, h3, h4, h5, h6 {
   .shifts-wrapper {
     grid-template-columns: 1fr;
   }
+
+  .pending-card { align-items: stretch; flex-direction: column; }
+  .pending-actions { justify-content: stretch; }
+  .pending-actions .btn { flex: 1; }
 }
 
 /* Web App Official Table View Mode (Dark Theme Matched) */

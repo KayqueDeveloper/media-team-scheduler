@@ -1,4 +1,8 @@
-import { getPublicUserByEmail } from './db/authRepository.js';
+import {
+  getAuthUserByEmail,
+  markUserEmailConfirmed,
+  setUserAuthIdentity
+} from './db/authRepository.js';
 import { getSupabaseAuthClient, isSupabaseAuthConfigured } from './supabase.js';
 
 function getBearerToken(req) {
@@ -19,8 +23,22 @@ async function resolveSupabaseUser(req) {
 
   // The local profile is the source of application roles and volunteer links.
   // Supabase user metadata is deliberately not used for authorization.
-  const user = await getPublicUserByEmail(data.user.email);
-  if (!user) return { status: 'unlinked', supabaseUser: data.user };
+  const profile = await getAuthUserByEmail(data.user.email);
+  if (!profile) return { status: 'unlinked', supabaseUser: data.user };
+  if (profile.authUserId && profile.authUserId !== data.user.id) {
+    return { status: 'unlinked', supabaseUser: data.user };
+  }
+
+  const { authUserId, ...user } = profile;
+  if (profile.approvalStatus === 'PENDING') {
+    if (!data.user.email_confirmed_at) {
+      return { status: 'email_unconfirmed', user, supabaseUser: data.user };
+    }
+    await markUserEmailConfirmed(profile.id, data.user.email_confirmed_at);
+    return { status: 'pending_approval', user, supabaseUser: data.user };
+  }
+  if (!profile.active) return { status: 'disabled', user, supabaseUser: data.user };
+  if (!authUserId) await setUserAuthIdentity(profile.id, data.user.id);
   return { status: 'authenticated', user, token, supabaseUser: data.user };
 }
 
@@ -44,6 +62,24 @@ export async function requireAuth(req, res, next) {
       return res.status(403).json({
         error: 'Authenticated account is not linked to an application profile.',
         code: 'AUTH_PROFILE_REQUIRED'
+      });
+    }
+    if (result.status === 'email_unconfirmed') {
+      return res.status(403).json({
+        error: 'Confirme seu e-mail antes de continuar.',
+        code: 'AUTH_EMAIL_NOT_CONFIRMED'
+      });
+    }
+    if (result.status === 'pending_approval') {
+      return res.status(403).json({
+        error: 'Seu e-mail foi confirmado, mas seu cadastro ainda aguarda aprovação do líder.',
+        code: 'AUTH_APPROVAL_PENDING'
+      });
+    }
+    if (result.status === 'disabled') {
+      return res.status(403).json({
+        error: 'Sua conta está inativa. Fale com o líder da equipe.',
+        code: 'AUTH_PROFILE_DISABLED'
       });
     }
     if (result.status !== 'authenticated') {

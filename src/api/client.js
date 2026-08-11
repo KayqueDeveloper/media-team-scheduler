@@ -194,9 +194,9 @@ export function createApiClient({
     return data.session?.access_token || null;
   }
 
-  async function request(path, { method = 'GET', body, signal } = {}) {
+  async function request(path, { method = 'GET', body, signal, authenticated = true } = {}) {
     if (!fetchImpl) throw new ApiError('O navegador não oferece suporte a requisições HTTP.');
-    const accessToken = await getAccessToken();
+    const accessToken = authenticated ? await getAccessToken() : null;
     const headers = new Headers();
     if (body !== undefined) headers.set('content-type', 'application/json');
     if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
@@ -256,6 +256,13 @@ export function createApiClient({
   }
 
   return {
+    async register({ name, email, phone, password }) {
+      return request('/auth/register', {
+        method: 'POST',
+        authenticated: false,
+        body: { name, email, phone, password }
+      });
+    },
     async getCurrentUser({ signal } = {}) {
       if (!authClient) return null;
       const { data, error } = await authClient.auth.getSession();
@@ -276,6 +283,19 @@ export function createApiClient({
       if (!authClient) return;
       const { error } = await authClient.auth.signOut();
       if (error) throw new ApiError(error.message, { status: 0, payload: error });
+    },
+    async requestPasswordReset(email) {
+      if (!authClient) throw new ApiError('Supabase Auth não está configurado.', { status: 503 });
+      const redirectTo = typeof window === 'undefined' ? undefined : `${window.location.origin}/redefinir-senha`;
+      const { error } = await authClient.auth.resetPasswordForEmail(email, redirectTo ? { redirectTo } : undefined);
+      if (error) throw new ApiError(error.message, { status: 400, payload: error });
+      return true;
+    },
+    async updatePassword(password) {
+      if (!authClient) throw new ApiError('Supabase Auth não está configurado.', { status: 503 });
+      const { error } = await authClient.auth.updateUser({ password });
+      if (error) throw new ApiError(error.message, { status: 400, payload: error });
+      return true;
     },
     subscribeToAuthState(onUser, onError = () => {}) {
       if (!authClient) return () => {};
@@ -352,6 +372,25 @@ export function createApiClient({
     async getAdminExchanges({ signal } = {}) {
       const payload = await request('/admin/exchanges', { signal });
       return (payload.exchanges || []).map(normalizeExchange);
+    },
+    async getPendingRegistrations({ signal } = {}) {
+      const payload = await request('/admin/registrations', { signal });
+      return (payload.registrations || []).map(item => ({
+        ...item,
+        id: String(item.id),
+        volunteerId: String(item.volunteerId)
+      }));
+    },
+    async updatePendingRegistration(id, changes) {
+      const payload = await request(`/admin/registrations/${id}`, { method: 'PATCH', body: changes });
+      return { ...payload.registration, id: String(payload.registration.id), volunteerId: String(payload.registration.volunteerId) };
+    },
+    async approvePendingRegistration(id) {
+      const payload = await request(`/admin/registrations/${id}/approve`, { method: 'POST' });
+      return { ...payload, volunteer: normalizeVolunteer(payload.volunteer) };
+    },
+    async rejectPendingRegistration(id) {
+      return request(`/admin/registrations/${id}`, { method: 'DELETE' });
     },
     async loadMonth(year, month, { signal } = {}) {
       const volunteersPromise = getVolunteers({ signal });

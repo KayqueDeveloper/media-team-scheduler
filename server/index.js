@@ -44,18 +44,32 @@ import { closeDatabase, getDatabase } from './db/index.js';
 import { ROLE_LIST, SHIFT_LIST } from './db/constants.js';
 import { generateSchedule, getSundaysInMonth } from './solver/scheduler.js';
 import {
+  approvePendingRegistration,
+  createPendingRegistration,
   createUser,
+  deletePendingRegistration,
   ensureBootstrapProfile,
+  getPendingRegistrationById,
+  getPendingRegistrations,
   getUserById,
   getUserIdByVolunteerId,
-  deleteUserById
+  deleteUserById,
+  markUserEmailConfirmed,
+  registrationEmailExists,
+  updatePendingRegistration
 } from './db/authRepository.js';
 import { requireAuth, requireRole } from './auth.js';
 import {
+  deleteSupabaseUser,
   ensureSupabaseUser,
+  findSupabaseUserByEmail,
+  getSupabaseAdminClient,
+  getSupabaseUserById,
   isSupabaseAdminConfigured,
-  isSupabaseAuthConfigured
+  isSupabaseAuthConfigured,
+  signUpSupabaseUser
 } from './supabase.js';
+import { validatePublicRegistration } from './registration.js';
 
 const PORT = process.env.PORT || 3001;
 
@@ -230,7 +244,8 @@ export function createApp({
   now = () => new Date(),
   timeZone = 'America/Sao_Paulo',
   bootstrapAdmin,
-  supabaseAuthClient = null
+  supabaseAuthClient = null,
+  supabaseAdminClient = null
 } = {}) {
   const app = express();
   const db = getDatabase(dbPath);
@@ -238,6 +253,7 @@ export function createApp({
   app.locals.closeDatabase = closeDatabase;
   app.locals.now = now;
   app.locals.supabaseAuthClient = supabaseAuthClient;
+  app.locals.supabaseAdminClient = supabaseAdminClient;
 
   app.locals.supabaseBootstrapReady = Promise.resolve(null);
   if (bootstrapAdmin?.password && isSupabaseAuthConfigured() && isSupabaseAdminConfigured()) {
@@ -259,6 +275,21 @@ export function createApp({
     .split(',')
     .map(origin => origin.trim())
     .filter(Boolean);
+
+  function getRegistrationRedirect(req) {
+    const configuredRedirect = process.env.AUTH_EMAIL_REDIRECT_TO?.trim();
+    if (configuredRedirect) return configuredRedirect;
+    const origin = req.get('origin');
+    if (!origin) return undefined;
+    try {
+      const originUrl = new URL(origin);
+      const sameHost = originUrl.host === req.get('host');
+      if (!sameHost && !allowedCorsOrigins.includes(origin)) return undefined;
+      return `${originUrl.origin}/cadastro?confirmado=1`;
+    } catch {
+      return undefined;
+    }
+  }
   if (allowedCorsOrigins.length > 0) {
     app.use(cors({
       origin(origin, callback) {
@@ -285,6 +316,74 @@ export function createApp({
       res.json({ status: 'ok' });
     } catch (error) {
       next(error);
+    }
+  });
+
+  app.post('/api/auth/register', async (req, res) => {
+    let supabaseUser = null;
+    try {
+      const input = validatePublicRegistration(req.body || {});
+      const adminClient = app.locals.supabaseAdminClient || getSupabaseAdminClient();
+      if (!adminClient) {
+        return res.status(503).json({
+          error: 'O cadastro está temporariamente indisponível. Configure o acesso administrativo do Supabase.',
+          code: 'SUPABASE_ADMIN_NOT_CONFIGURED'
+        });
+      }
+      if (await registrationEmailExists(input.email) || await findSupabaseUserByEmail(input.email, adminClient)) {
+        return res.status(409).json({
+          error: 'Este e-mail já possui cadastro. Entre no sistema ou recupere sua senha.',
+          code: 'EMAIL_ALREADY_REGISTERED'
+        });
+      }
+
+      const signup = await signUpSupabaseUser({
+        ...input,
+        emailRedirectTo: getRegistrationRedirect(req)
+      }, app.locals.supabaseAuthClient);
+      supabaseUser = signup.user;
+      if (String(supabaseUser.email || '').toLowerCase() !== input.email) {
+        throw new Error('O Supabase retornou uma identidade incompatível com o e-mail informado.');
+      }
+      if (signup.session || supabaseUser.email_confirmed_at) {
+        await deleteSupabaseUser(supabaseUser.id, adminClient);
+        supabaseUser = null;
+        return res.status(503).json({
+          error: 'Ative a confirmação de e-mail no Supabase Auth antes de liberar o cadastro.',
+          code: 'EMAIL_CONFIRMATION_REQUIRED'
+        });
+      }
+
+      const registration = await createPendingRegistration({
+        authUserId: supabaseUser.id,
+        name: input.name,
+        email: input.email,
+        phone: input.phone
+      });
+      res.status(201).json({
+        registration: {
+          id: registration.id,
+          email: registration.email,
+          status: 'AWAITING_EMAIL_CONFIRMATION'
+        },
+        message: 'Enviamos um link de confirmação para o seu e-mail.'
+      });
+    } catch (error) {
+      if (supabaseUser?.id) {
+        try {
+          await deleteSupabaseUser(supabaseUser.id, app.locals.supabaseAdminClient || getSupabaseAdminClient());
+        } catch {
+          // Preserve the original registration error. The orphaned Auth user can
+          // be removed from the Supabase dashboard if compensation also fails.
+        }
+      }
+      const duplicate = /unique|already registered|already exists|taken/i.test(String(error.message));
+      res.status(duplicate ? 409 : 400).json({
+        error: duplicate
+          ? 'Este e-mail já possui cadastro. Entre no sistema ou recupere sua senha.'
+          : error.message,
+        code: duplicate ? 'EMAIL_ALREADY_REGISTERED' : (error.code || 'REGISTRATION_FAILED')
+      });
     }
   });
 
@@ -386,6 +485,72 @@ export function createApp({
 
   app.get('/api/admin/exchanges', requireAuth, requireRole('LEADER'), async (req, res) => {
     res.json({ exchanges: await getAllScheduleExchanges() });
+  });
+
+  async function syncPendingEmailConfirmations() {
+    const adminClient = app.locals.supabaseAdminClient || getSupabaseAdminClient();
+    if (!adminClient) return;
+    const pending = await getPendingRegistrations({ confirmedOnly: false });
+    await Promise.all(pending
+      .filter(registration => !registration.emailConfirmedAt && registration.authUserId)
+      .map(async registration => {
+        const authUser = await getSupabaseUserById(registration.authUserId, adminClient);
+        if (authUser?.email_confirmed_at) {
+          await markUserEmailConfirmed(registration.id, authUser.email_confirmed_at);
+        }
+      }));
+  }
+
+  function registrationResponse(registration) {
+    if (!registration) return null;
+    const { authUserId, ...safeRegistration } = registration;
+    return safeRegistration;
+  }
+
+  app.get('/api/admin/registrations', requireAuth, requireRole('LEADER'), async (req, res) => {
+    try {
+      await syncPendingEmailConfirmations();
+      res.json({ registrations: (await getPendingRegistrations()).map(registrationResponse) });
+    } catch (error) {
+      res.status(502).json({ error: error.message, code: 'REGISTRATION_SYNC_FAILED' });
+    }
+  });
+
+  app.patch('/api/admin/registrations/:id', requireAuth, requireRole('LEADER'), async (req, res) => {
+    try {
+      const registration = await updatePendingRegistration(Number(req.params.id), req.body || {});
+      if (!registration) return res.status(404).json({ error: 'Cadastro pendente não encontrado.' });
+      res.json({ registration: registrationResponse(registration) });
+    } catch (error) {
+      res.status(422).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/admin/registrations/:id/approve', requireAuth, requireRole('LEADER'), async (req, res) => {
+    try {
+      await syncPendingEmailConfirmations();
+      const id = Number(req.params.id);
+      const registration = await getPendingRegistrationById(id);
+      if (!registration) return res.status(404).json({ error: 'Cadastro pendente não encontrado.' });
+      const user = await approvePendingRegistration(id);
+      res.json({ user, volunteer: await getVolunteerById(registration.volunteerId) });
+    } catch (error) {
+      res.status(422).json({ error: error.message });
+    }
+  });
+
+  app.delete('/api/admin/registrations/:id', requireAuth, requireRole('LEADER'), async (req, res) => {
+    try {
+      const registration = await getPendingRegistrationById(Number(req.params.id));
+      if (!registration) return res.status(404).json({ error: 'Cadastro pendente não encontrado.' });
+      const adminClient = app.locals.supabaseAdminClient || getSupabaseAdminClient();
+      if (!adminClient) return res.status(503).json({ error: 'Supabase Admin não está configurado.' });
+      await deleteSupabaseUser(registration.authUserId, adminClient);
+      await deletePendingRegistration(registration.id);
+      res.status(204).end();
+    } catch (error) {
+      res.status(502).json({ error: error.message, code: 'REGISTRATION_REJECTION_FAILED' });
+    }
   });
 
   function requireVolunteerIdentity(req, res) {

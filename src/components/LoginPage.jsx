@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { LockKeyhole, LogIn } from 'lucide-react';
+import { LockKeyhole, LogIn, UserPlus } from 'lucide-react';
 
-export function LoginPage({ onLogin, error, busy = false }) {
+export function LoginPage({ onLogin, onOpenRegistration, onOpenRecovery, error, busy = false }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
@@ -27,6 +27,11 @@ export function LoginPage({ onLogin, error, busy = false }) {
         </label>
         <button className="btn btn-primary auth-submit" type="submit" disabled={busy}>
           <LogIn size={16} /> {busy ? 'Entrando…' : 'Entrar'}
+        </button>
+        <button className="auth-link" type="button" onClick={() => onOpenRecovery(email)}>Esqueci minha senha</button>
+        <div className="auth-divider"><span>ou</span></div>
+        <button className="btn btn-secondary auth-submit" type="button" onClick={onOpenRegistration}>
+          <UserPlus size={16} /> Ainda não tenho cadastro
         </button>
       </form>
     </main>

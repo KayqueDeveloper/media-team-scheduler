@@ -10,6 +10,10 @@ import { VolunteerManager } from './components/VolunteerManager';
 import { LoginPage } from './components/LoginPage';
 import { VolunteerPortal } from './components/VolunteerPortal';
 import { AdminExchangeManager } from './components/AdminExchangeManager';
+import { PasswordRecoveryPage } from './components/PasswordRecoveryPage';
+import { PendingRegistrationManager } from './components/PendingRegistrationManager';
+import { RegistrationPage } from './components/RegistrationPage';
+import { ResetPasswordPage } from './components/ResetPasswordPage';
 import { getCurrentBusinessMonth, getSundaysForMonth, MONTH_NAMES, ROLES, SHIFTS } from './domain/catalog';
 import {
   collectScheduleWarnings,
@@ -58,16 +62,33 @@ export function App() {
   const [busyAction, setBusyAction] = useState('');
   const [reloadToken, setReloadToken] = useState(0);
   const [adminExchanges, setAdminExchanges] = useState([]);
+  const [pendingRegistrations, setPendingRegistrations] = useState([]);
   const [authUser, setAuthUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState('');
   const [authBusy, setAuthBusy] = useState(false);
+  const [authPath, setAuthPath] = useState(() => window.location.pathname);
+  const [recoveryEmail, setRecoveryEmail] = useState('');
+
+  useEffect(() => {
+    const syncPath = () => setAuthPath(window.location.pathname);
+    window.addEventListener('popstate', syncPath);
+    return () => window.removeEventListener('popstate', syncPath);
+  }, []);
+
+  function navigateAuth(path) {
+    window.history.pushState({}, '', path);
+    setAuthPath(window.location.pathname);
+  }
 
   useEffect(() => {
     api.getCurrentUser()
       .then(setAuthUser)
       .catch(error => {
         if (error.status !== 401) setAuthError(error.message);
+        if (error.payload?.code === 'AUTH_APPROVAL_PENDING' && window.location.pathname !== '/redefinir-senha') {
+          api.logout().catch(() => {});
+        }
       })
       .finally(() => setAuthLoading(false));
   }, []);
@@ -81,6 +102,9 @@ export function App() {
       if (error.status === 401 || error.status === 403) {
         setAuthUser(null);
         setAuthError(error.message);
+        if (error.payload?.code === 'AUTH_APPROVAL_PENDING' && window.location.pathname !== '/redefinir-senha') {
+          api.logout().catch(() => {});
+        }
       }
     }
   ), []);
@@ -145,6 +169,24 @@ export function App() {
     return () => { cancelled = true; };
   }, [authUser, reloadToken]);
 
+  useEffect(() => {
+    if (!authUser || authUser.role !== 'LEADER') return undefined;
+    let cancelled = false;
+    api.getPendingRegistrations()
+      .then(items => { if (!cancelled) setPendingRegistrations(items); })
+      .catch(error => {
+        if (cancelled) return;
+        setPendingRegistrations([]);
+        if (error.status === 401) {
+          setAuthUser(null);
+          setAuthError('Sua sessão expirou. Entre novamente para continuar.');
+        } else {
+          setNotification({ type: 'error', message: `Não foi possível carregar os cadastros: ${error.message}` });
+        }
+      });
+    return () => { cancelled = true; };
+  }, [authUser, reloadToken]);
+
   async function handleLogin(email, password) {
     setAuthBusy(true);
     setAuthError('');
@@ -168,7 +210,43 @@ export function App() {
   }
 
   if (authLoading) return <div className="app-state"><LoaderCircle className="spin" size={30} /><p>Verificando acesso…</p></div>;
-  if (!authUser) return <LoginPage onLogin={handleLogin} error={authError} busy={authBusy} />;
+  if (!authUser && authPath === '/cadastro') return (
+    <RegistrationPage
+      onRegister={api.register}
+      confirmed={new URLSearchParams(window.location.search).get('confirmado') === '1'}
+      onBack={() => navigateAuth('/')}
+      onRecover={email => {
+        setRecoveryEmail(email);
+        navigateAuth('/recuperar-senha');
+      }}
+    />
+  );
+  if (!authUser && authPath === '/recuperar-senha') return (
+    <PasswordRecoveryPage initialEmail={recoveryEmail} onRequest={api.requestPasswordReset} onBack={() => navigateAuth('/')} />
+  );
+  if (authPath === '/redefinir-senha') return (
+    <ResetPasswordPage
+      onUpdate={api.updatePassword}
+      onDone={async () => {
+        await api.logout().catch(() => {});
+        setAuthUser(null);
+        setAuthError('Senha atualizada. Entre novamente para continuar.');
+        navigateAuth('/');
+      }}
+    />
+  );
+  if (!authUser) return (
+    <LoginPage
+      onLogin={handleLogin}
+      onOpenRegistration={() => navigateAuth('/cadastro')}
+      onOpenRecovery={email => {
+        setRecoveryEmail(email);
+        navigateAuth('/recuperar-senha');
+      }}
+      error={authError}
+      busy={authBusy}
+    />
+  );
   if (authUser.role === 'VOLUNTEER') return (
     <VolunteerPortal
       user={authUser}
@@ -390,6 +468,32 @@ export function App() {
     });
   }
 
+  async function handleUpdatePendingRegistration(id, changes) {
+    return runMutation('updating-registration', async () => {
+      const updated = await api.updatePendingRegistration(id, changes);
+      setPendingRegistrations(current => current.map(item => item.id === id ? updated : item));
+      notify('success', 'Cadastro pendente atualizado.');
+    });
+  }
+
+  async function handleApprovePendingRegistration(id) {
+    return runMutation('approving-registration', async () => {
+      const { volunteer } = await api.approvePendingRegistration(id);
+      setPendingRegistrations(current => current.filter(item => item.id !== id));
+      setVolunteers(current => [...current.filter(item => item.id !== volunteer.id), volunteer]
+        .sort((a, b) => a.name.localeCompare(b.name)));
+      notify('success', 'Cadastro aprovado. O voluntário já pode acessar o portal.');
+    });
+  }
+
+  async function handleRejectPendingRegistration(id) {
+    return runMutation('rejecting-registration', async () => {
+      await api.rejectPendingRegistration(id);
+      setPendingRegistrations(current => current.filter(item => item.id !== id));
+      notify('success', 'Cadastro rejeitado e excluído definitivamente.');
+    });
+  }
+
   async function handleAddUnavailability(newUnavailability) {
     return runMutation('creating-unavailability', async () => {
       const created = await api.createUnavailability(newUnavailability);
@@ -422,6 +526,7 @@ export function App() {
         disabled={loading || isBusy}
         busyAction={busyAction}
         hasSchedule={Boolean(scheduleState.id)}
+        pendingCount={pendingRegistrations.length}
       />
 
       {notification && (
@@ -503,6 +608,16 @@ export function App() {
 
             {activeTab === 'exchanges' && (
               <AdminExchangeManager exchanges={adminExchanges} />
+            )}
+
+            {activeTab === 'registrations' && (
+              <PendingRegistrationManager
+                registrations={pendingRegistrations}
+                onUpdate={handleUpdatePendingRegistration}
+                onApprove={handleApprovePendingRegistration}
+                onReject={handleRejectPendingRegistration}
+                disabled={isBusy}
+              />
             )}
           </>
         )}

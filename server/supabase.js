@@ -67,6 +67,75 @@ export function getSupabaseAdminClient() {
   return adminClient;
 }
 
+function getTransientSupabaseAuthClient() {
+  const url = getProjectUrl();
+  const key = getPublishableKey();
+  if (!url || !key) return null;
+  return createClient(url, key, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+      detectSessionInUrl: false
+    }
+  });
+}
+
+export async function signUpSupabaseUser({ email, password, name, emailRedirectTo }, clientOverride = null) {
+  const client = clientOverride || getTransientSupabaseAuthClient();
+  if (!client) {
+    const error = new Error('Supabase Auth is not configured.');
+    error.code = 'SUPABASE_AUTH_NOT_CONFIGURED';
+    throw error;
+  }
+  const { data, error } = await client.auth.signUp({
+    email: String(email).trim().toLowerCase(),
+    password,
+    options: {
+      data: { full_name: String(name || '').trim() },
+      ...(emailRedirectTo ? { emailRedirectTo } : {})
+    }
+  });
+  if (error) throw error;
+  if (!data?.user) throw new Error('Supabase did not create the authentication account.');
+  return data;
+}
+
+export async function findSupabaseUserByEmail(email, clientOverride = null) {
+  const client = clientOverride || getSupabaseAdminClient();
+  if (!client) return null;
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const perPage = 1000;
+  for (let page = 1; page <= 100; page += 1) {
+    const { data, error } = await client.auth.admin.listUsers({ page, perPage });
+    if (error) throw error;
+    const users = data?.users || [];
+    const found = users.find(user => String(user.email || '').trim().toLowerCase() === normalizedEmail);
+    if (found) return found;
+    if (users.length < perPage) return null;
+  }
+  throw new Error('Supabase user lookup exceeded the supported page limit.');
+}
+
+export async function getSupabaseUserById(id, clientOverride = null) {
+  const client = clientOverride || getSupabaseAdminClient();
+  if (!client) return null;
+  const { data, error } = await client.auth.admin.getUserById(id);
+  if (error) throw error;
+  return data?.user || null;
+}
+
+export async function deleteSupabaseUser(id, clientOverride = null) {
+  const client = clientOverride || getSupabaseAdminClient();
+  if (!client) {
+    const error = new Error('SUPABASE_SECRET_KEY is required to delete users.');
+    error.code = 'SUPABASE_ADMIN_NOT_CONFIGURED';
+    throw error;
+  }
+  const { error } = await client.auth.admin.deleteUser(id, false);
+  if (error) throw error;
+  return true;
+}
+
 export async function createSupabaseUser({ email, password, name }) {
   const client = getSupabaseAdminClient();
   if (!client) {

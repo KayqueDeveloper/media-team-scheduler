@@ -8,28 +8,65 @@ import test from 'node:test';
 import { createApp } from './index.js';
 
 async function createHttpFixture(options = {}) {
-  const { databasePath, supabaseAuthClient: providedAuthClient, ...appOptions } = options;
+  const {
+    databasePath,
+    supabaseAuthClient: providedAuthClient,
+    supabaseAdminClient: providedAdminClient,
+    ...appOptions
+  } = options;
   const ownsDirectory = !databasePath;
   const directory = ownsDirectory
     ? await mkdtemp(path.join(os.tmpdir(), 'media-scheduler-api-'))
     : path.dirname(databasePath);
+  const authUsers = new Map();
+  let nextAuthUserId = 1;
   const defaultAuthClient = {
     auth: {
       async getUser(token) {
         const prefix = 'test-token:';
         const email = token.startsWith(prefix) ? token.slice(prefix.length) : '';
+        const registeredUser = [...authUsers.values()].find(user => user.email === email);
         return email
-          ? { data: { user: { id: `supabase-${email}`, email } }, error: null }
+          ? { data: { user: registeredUser || { id: `supabase-${email}`, email, email_confirmed_at: '2026-01-01T00:00:00Z' } }, error: null }
           : { data: { user: null }, error: new Error('Invalid test token.') };
+      },
+      async signUp({ email, options: signupOptions }) {
+        const user = {
+          id: `signup-user-${nextAuthUserId++}`,
+          email: email.toLowerCase(),
+          email_confirmed_at: null,
+          identities: [{ id: `identity-${email}` }],
+          user_metadata: signupOptions?.data || {}
+        };
+        authUsers.set(user.id, user);
+        return { data: { user, session: null }, error: null };
+      }
+    }
+  };
+  const defaultAdminClient = {
+    auth: {
+      admin: {
+        async listUsers() {
+          return { data: { users: [...authUsers.values()] }, error: null };
+        },
+        async getUserById(id) {
+          return { data: { user: authUsers.get(id) || null }, error: null };
+        },
+        async deleteUser(id) {
+          authUsers.delete(id);
+          return { data: {}, error: null };
+        }
       }
     }
   };
   const supabaseAuthClient = providedAuthClient || defaultAuthClient;
+  const supabaseAdminClient = providedAdminClient || defaultAdminClient;
   const app = createApp({
     dbPath: databasePath || path.join(directory, 'test.sqlite'),
     now: () => new Date('2026-06-20T12:00:00Z'),
     bootstrapAdmin: { email: 'leader@test.local', name: 'Test Leader' },
     supabaseAuthClient,
+    supabaseAdminClient,
     ...appOptions
   });
   const server = app.listen(0, '127.0.0.1');
@@ -64,13 +101,23 @@ async function createHttpFixture(options = {}) {
     authToken = `test-token:${email}`;
   }
 
+  function confirmEmail(email) {
+    const user = [...authUsers.values()].find(item => item.email === email.toLowerCase());
+    if (!user) throw new Error(`Auth user not found for ${email}`);
+    user.email_confirmed_at = '2026-06-20T12:30:00Z';
+  }
+
+  function hasAuthUser(email) {
+    return [...authUsers.values()].some(user => user.email === email.toLowerCase());
+  }
+
   async function cleanup() {
     await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     await app.locals.closeDatabase();
     if (ownsDirectory) await rm(directory, { recursive: true, force: true });
   }
 
-  return { request, requestUnauthenticated, loginAs, cleanup };
+  return { request, requestUnauthenticated, loginAs, confirmEmail, hasAuthUser, cleanup };
 }
 
 test('HTTP API enforces authentication and leader authorization', async t => {
@@ -105,6 +152,95 @@ test('HTTP API enforces authentication and leader authorization', async t => {
   assert.equal(me.status, 200);
   assert.equal(me.body.user.volunteerId, volunteer.body.id);
 
+});
+
+test('public registration requires email confirmation and leader approval before portal access', async t => {
+  const fixture = await createHttpFixture();
+  t.after(fixture.cleanup);
+
+  const invalidPhone = await fixture.requestUnauthenticated('POST', '/api/auth/register', {
+    name: 'Nova Voluntária',
+    email: 'nova@test.local',
+    phone: '1234',
+    password: 'senha-segura'
+  });
+  assert.equal(invalidPhone.status, 400);
+
+  const created = await fixture.requestUnauthenticated('POST', '/api/auth/register', {
+    name: 'Nova Voluntária',
+    email: 'nova@test.local',
+    phone: '(31) 99999-1234',
+    password: 'senha-segura'
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.body.registration.status, 'AWAITING_EMAIL_CONFIRMATION');
+
+  const beforeConfirmation = await fixture.request('GET', '/api/admin/registrations');
+  assert.equal(beforeConfirmation.status, 200);
+  assert.equal(beforeConfirmation.body.registrations.length, 0);
+
+  fixture.confirmEmail('nova@test.local');
+  await fixture.loginAs('nova@test.local');
+  const pendingLogin = await fixture.request('GET', '/api/auth/me');
+  assert.equal(pendingLogin.status, 403);
+  assert.equal(pendingLogin.body.code, 'AUTH_APPROVAL_PENDING');
+
+  await fixture.loginAs('leader@test.local');
+  const pending = await fixture.request('GET', '/api/admin/registrations');
+  assert.equal(pending.status, 200);
+  assert.equal(pending.body.registrations.length, 1);
+  assert.equal(pending.body.registrations[0].phone, '+5531999991234');
+  const registrationId = pending.body.registrations[0].id;
+
+  const immutableEmail = await fixture.request('PATCH', `/api/admin/registrations/${registrationId}`, {
+    email: 'outro@test.local'
+  });
+  assert.equal(immutableEmail.status, 422);
+
+  const updated = await fixture.request('PATCH', `/api/admin/registrations/${registrationId}`, {
+    name: 'Voluntária Aprovada',
+    phone: '(31) 98888-4321'
+  });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.body.registration.name, 'Voluntária Aprovada');
+  assert.equal(updated.body.registration.phone, '+5531988884321');
+
+  const approved = await fixture.request('POST', `/api/admin/registrations/${registrationId}/approve`);
+  assert.equal(approved.status, 200);
+  assert.equal(approved.body.user.active, true);
+  assert.equal(approved.body.user.approvalStatus, 'APPROVED');
+  assert.equal(approved.body.volunteer.active, true);
+  assert.deepEqual(approved.body.volunteer.proficiencies, {});
+
+  await fixture.loginAs('nova@test.local');
+  const me = await fixture.request('GET', '/api/auth/me');
+  assert.equal(me.status, 200);
+  assert.equal(me.body.user.role, 'VOLUNTEER');
+  assert.equal(me.body.user.name, 'Voluntária Aprovada');
+});
+
+test('rejecting a pending registration deletes Auth and local records and frees the email', async t => {
+  const fixture = await createHttpFixture();
+  t.after(fixture.cleanup);
+
+  const registrationInput = {
+    name: 'Cadastro Rejeitado',
+    email: 'rejeitado@test.local',
+    phone: '(11) 99999-1111',
+    password: 'senha-segura'
+  };
+  assert.equal((await fixture.requestUnauthenticated('POST', '/api/auth/register', registrationInput)).status, 201);
+  fixture.confirmEmail(registrationInput.email);
+
+  const pending = await fixture.request('GET', '/api/admin/registrations');
+  assert.equal(pending.body.registrations.length, 1);
+  const rejected = await fixture.request('DELETE', `/api/admin/registrations/${pending.body.registrations[0].id}`);
+  assert.equal(rejected.status, 204);
+  assert.equal(fixture.hasAuthUser(registrationInput.email), false);
+
+  const volunteers = await fixture.request('GET', '/api/volunteers');
+  assert.equal(volunteers.body.some(volunteer => volunteer.email === registrationInput.email), false);
+  assert.equal((await fixture.requestUnauthenticated('POST', '/api/auth/register', registrationInput)).status, 201);
 });
 
 test('volunteer API isolates personal data and applies an accepted exchange as a new publication version', async t => {

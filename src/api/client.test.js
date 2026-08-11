@@ -245,3 +245,84 @@ test('não oferece fallback de login quando o Supabase não está configurado', 
     error => error.status === 503 && /Supabase Auth/.test(error.message)
   );
 });
+
+test('envia o cadastro público sem token e preserva o código de e-mail duplicado', async () => {
+  let captured;
+  const authClient = {
+    auth: {
+      async getSession() {
+        throw new Error('O cadastro público não deve consultar a sessão.');
+      }
+    }
+  };
+  const client = createApiClient({
+    authClient,
+    fetchImpl: async (url, init) => {
+      captured = { url, init };
+      return jsonResponse({
+        error: 'Este e-mail já possui cadastro.',
+        code: 'EMAIL_ALREADY_REGISTERED'
+      }, { status: 409 });
+    }
+  });
+
+  await assert.rejects(
+    () => client.register({ name: 'Lia', email: 'lia@example.com', phone: '(11) 99999-0000', password: 'password' }),
+    error => error.status === 409 && error.payload.code === 'EMAIL_ALREADY_REGISTERED'
+  );
+  assert.equal(captured.url, '/api/auth/register');
+  assert.equal(captured.init.headers.has('Authorization'), false);
+});
+
+test('expõe a fila administrativa e suas ações', async () => {
+  const calls = [];
+  const client = createApiClient({
+    fetchImpl: async (url, init) => {
+      calls.push([url, init.method]);
+      if (url === '/api/admin/registrations') return jsonResponse({ registrations: [{ id: 4, volunteerId: 8, name: 'Lia' }] });
+      if (init.method === 'PATCH') return jsonResponse({ registration: { id: 4, volunteerId: 8, name: 'Lia Editada' } });
+      if (url.endsWith('/approve')) return jsonResponse({ user: { id: 4 }, volunteer: { id: 8, name: 'Lia', active: 1 } });
+      return new Response(null, { status: 204 });
+    }
+  });
+
+  const pending = await client.getPendingRegistrations();
+  const updated = await client.updatePendingRegistration('4', { name: 'Lia Editada' });
+  const approved = await client.approvePendingRegistration('4');
+  await client.rejectPendingRegistration('4');
+
+  assert.equal(pending[0].id, '4');
+  assert.equal(updated.name, 'Lia Editada');
+  assert.equal(approved.volunteer.id, '8');
+  assert.deepEqual(calls, [
+    ['/api/admin/registrations', 'GET'],
+    ['/api/admin/registrations/4', 'PATCH'],
+    ['/api/admin/registrations/4/approve', 'POST'],
+    ['/api/admin/registrations/4', 'DELETE']
+  ]);
+});
+
+test('usa o Supabase Auth para solicitar e concluir a recuperação de senha', async () => {
+  const calls = [];
+  const authClient = {
+    auth: {
+      async resetPasswordForEmail(email, options) {
+        calls.push(['reset', email, options]);
+        return { error: null };
+      },
+      async updateUser(attributes) {
+        calls.push(['update', attributes]);
+        return { error: null };
+      }
+    }
+  };
+  const client = createApiClient({ authClient, fetchImpl: async () => jsonResponse({}) });
+
+  await client.requestPasswordReset('lia@example.com');
+  await client.updatePassword('nova-senha');
+
+  assert.deepEqual(calls, [
+    ['reset', 'lia@example.com', undefined],
+    ['update', { password: 'nova-senha' }]
+  ]);
+});

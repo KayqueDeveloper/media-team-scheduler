@@ -11,7 +11,8 @@ import {
   AlertCircle,
   Printer,
   Grid,
-  ArrowLeftRight
+  ArrowLeftRight,
+  UserCheck
 } from 'lucide-react';
 
 export const DashboardHeader = ({
@@ -26,7 +27,8 @@ export const DashboardHeader = ({
   disabled = false,
   busyAction = '',
   hasSchedule = false,
-  onLogout
+  onLogout,
+  pendingCount = 0
 }) => {
   return (
     <header className="dashboard-header glass-panel">
@@ -142,6 +144,16 @@ export const DashboardHeader = ({
         >
           <ArrowLeftRight size={16} />
           Trocas
+        </button>
+
+        <button
+          className={`tab-btn ${activeTab === 'registrations' ? 'active' : ''}`}
+          onClick={() => onTabChange('registrations')}
+          disabled={disabled}
+        >
+          <UserCheck size={16} />
+          Cadastros
+          {pendingCount > 0 && <span className="tab-count">{pendingCount}</span>}
         </button>
       </nav>
     </header>

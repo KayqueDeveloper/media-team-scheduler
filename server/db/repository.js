@@ -43,7 +43,9 @@ export async function createVolunteer(volunteerData) {
 
 export async function getAllVolunteers({ activeOnly = false, includeProficiencies = true } = {}) {
   const db = database();
-  const query = `SELECT * FROM volunteers${activeOnly ? ' WHERE active = 1' : ''} ORDER BY name ASC`;
+  const filters = ["NOT EXISTS (SELECT 1 FROM users u WHERE u.volunteer_id = volunteers.id AND u.approval_status = 'PENDING')"];
+  if (activeOnly) filters.push('active = 1');
+  const query = `SELECT * FROM volunteers WHERE ${filters.join(' AND ')} ORDER BY name ASC`;
   const volunteers = (await db.all(query)).map(formatVolunteer);
   if (includeProficiencies) {
     for (const volunteer of volunteers) volunteer.proficiencies = await getProficiencies(db, volunteer.id);

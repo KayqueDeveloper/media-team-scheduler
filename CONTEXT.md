@@ -75,9 +75,12 @@ _Avoid_: Disponível, habilitado
 Voluntário preservado no histórico, mas inelegível para novas alocações até ser reativado.
 _Avoid_: Excluído, removido
 
+**Cadastro pendente**:
+Solicitação de um novo voluntário que já confirmou o e-mail, mas ainda aguarda aprovação do líder. Não possui acesso ao portal e não aparece na gestão normal de voluntários.
+_Avoid_: Voluntário inativo, conta bloqueada
+
 
 ## Fases de Desenvolvimento
 
 - **Fase 1**: Painel Administrativo do Líder com persistência centralizada, gestão de voluntários/proficiências, registro de indisponibilidades, geração com revisão, publicação versionada e exportação oficial em PDF.
 - **Fase 2**: Portal do Voluntário (Autenticação + Auto-gestão de Indisponibilidades + Trocas de Escala).
-

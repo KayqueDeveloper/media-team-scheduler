@@ -62,6 +62,26 @@ O navegador mantém a sessão do Supabase e envia o access token em `Authorizati
 
 Alterações e resets de senha devem ser feitos pelo Supabase Auth.
 
+### Cadastro público de voluntários
+
+A tela de login oferece a opção **Ainda não tenho cadastro**, também acessível diretamente em `/cadastro`. O formulário exige nome, e-mail, telefone brasileiro com DDD e senha de pelo menos 8 caracteres.
+
+Mantenha **Confirm email** habilitado nas configurações do Supabase Auth. Adicione as URLs públicas `/cadastro?confirmado=1` e `/redefinir-senha` à lista de Redirect URLs. Por padrão, o backend envia o voluntário para `/cadastro?confirmado=1`; quando frontend e API usam domínios diferentes, configure a URL completa:
+
+```bash
+AUTH_EMAIL_REDIRECT_TO=https://painel.exemplo.org/cadastro?confirmado=1
+```
+
+O fluxo é:
+
+1. o Supabase cria a identidade e envia o e-mail de confirmação;
+2. a API cria um voluntário inativo e uma conta com aprovação pendente;
+3. depois da confirmação, o cadastro aparece na fila **Cadastros** do painel do líder;
+4. a aprovação ativa a conta e o voluntário, inicialmente sem proficiências (N0);
+5. a rejeição exclui definitivamente a identidade do Supabase e os registros locais.
+
+O backend precisa de `SUPABASE_SECRET_KEY` para verificar identidades e executar rejeições. Essa chave nunca é enviada ao navegador. E-mails já existentes são bloqueados; a própria tela oferece acesso ao login e à recuperação de senha.
+
 Quando o painel e a API estiverem em origens diferentes, configure as origens permitidas separadas por vírgula:
 
 ```bash
@@ -88,6 +108,7 @@ No Render, configure:
 - `AUTH_BOOTSTRAP_EMAIL`: e-mail inicial do líder
 - `AUTH_BOOTSTRAP_NAME`: nome opcional do perfil inicial
 - `AUTH_BOOTSTRAP_PASSWORD`: opcional; senha para provisionar o usuário inicial no Supabase Auth
+- `AUTH_EMAIL_REDIRECT_TO`: opcional; URL completa para onde o Supabase redireciona após confirmar um novo cadastro
 
 As variáveis `VITE_*` precisam estar configuradas antes do build do Render, pois o Vite as incorpora no bundle público. Nunca use `SUPABASE_SECRET_KEY` com o prefixo `VITE_`.
 
