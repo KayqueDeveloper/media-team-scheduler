@@ -32,6 +32,30 @@ npm run dev
 
 O painel fica disponível em `http://localhost:3000` e encaminha chamadas `/api` para o servidor local.
 
+Na primeira execução, crie o líder inicial informando as variáveis antes de iniciar a API:
+
+```bash
+AUTH_BOOTSTRAP_EMAIL=lider@igreja.org AUTH_BOOTSTRAP_PASSWORD='troque-esta-senha' npm run server
+```
+
+O líder poderá criar as contas dos voluntários pela API administrativa. As sessões usam cookie `HttpOnly` e as rotas administrativas exigem autenticação de líder.
+
+Se o e-mail já existir e a senha estiver incorreta, pare a API e faça um reset explícito uma única vez:
+
+```bash
+AUTH_BOOTSTRAP_EMAIL=lider@igreja.org AUTH_BOOTSTRAP_PASSWORD='nova-senha-segura' AUTH_BOOTSTRAP_RESET=true npm run server
+```
+
+Depois, reinicie a API sem `AUTH_BOOTSTRAP_RESET=true`.
+
+Quando o painel e a API estiverem em origens diferentes, configure as origens permitidas separadas por vírgula e habilite cookies cross-site somente se necessário:
+
+```bash
+CORS_ORIGIN=https://painel.exemplo.org COOKIE_CROSS_SITE=true npm run server
+```
+
+Nesse cenário, a API deve estar sob HTTPS para que o cookie `Secure` seja aceito pelo navegador.
+
 ## Verificação
 
 ```bash
