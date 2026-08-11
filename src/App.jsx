@@ -72,6 +72,19 @@ export function App() {
       .finally(() => setAuthLoading(false));
   }, []);
 
+  useEffect(() => api.subscribeToAuthState(
+    user => {
+      setAuthUser(user);
+      if (!user) setAuthError('');
+    },
+    error => {
+      if (error.status === 401 || error.status === 403) {
+        setAuthUser(null);
+        setAuthError(error.message);
+      }
+    }
+  ), []);
+
   const sundays = useMemo(() => getSundaysForMonth(year, monthIndex), [year, monthIndex]);
   const month = monthIndex + 1;
   const currentMonthLabel = `${MONTH_NAMES[monthIndex]} ${year}`;

@@ -58,6 +58,10 @@ export function getUserById(id) {
   return publicUser(getDatabase().prepare(`SELECT * FROM users WHERE id = ?`).get(id));
 }
 
+export function deleteUserById(id) {
+  return getDatabase().prepare(`DELETE FROM users WHERE id = ?`).run(id).changes > 0;
+}
+
 export function getUserIdByVolunteerId(volunteerId) {
   return getDatabase().prepare(`SELECT id FROM users WHERE volunteer_id = ? AND active = 1`).get(volunteerId)?.id || null;
 }
@@ -68,6 +72,10 @@ export function getLeaderUserIds() {
 
 export function getUserByEmail(email) {
   return getDatabase().prepare(`SELECT * FROM users WHERE email = ? COLLATE NOCASE`).get(email?.trim()) || null;
+}
+
+export function getPublicUserByEmail(email) {
+  return publicUser(getUserByEmail(email));
 }
 
 export function authenticateUser(email, password) {

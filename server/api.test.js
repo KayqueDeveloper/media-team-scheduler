@@ -34,6 +34,7 @@ async function createHttpFixture(options = {}) {
   async function request(method, pathname, body) {
     const headers = { ...(body === undefined ? {} : { 'content-type': 'application/json' }) };
     if (cookie) headers.cookie = cookie;
+    if (appOptions.supabaseAuthClient) headers.authorization = 'Bearer test-supabase-token';
     const response = await fetch(`http://127.0.0.1:${port}${pathname}`, {
       method,
       headers,
@@ -449,4 +450,29 @@ test('HTTP API rate-limits repeated login attempts per email and IP', async t =>
   });
   assert.equal(limited.status, 429);
   assert.equal(limited.body.code, 'LOGIN_RATE_LIMITED');
+});
+
+test('HTTP API validates Supabase access tokens before resolving the local profile', async t => {
+  const fixture = await createHttpFixture({
+    supabaseAuthClient: {
+      auth: {
+        async getUser(token) {
+          assert.equal(token, 'test-supabase-token');
+          return {
+            data: { user: { id: 'supabase-user-id', email: 'leader@test.local' } },
+            error: null
+          };
+        }
+      }
+    }
+  });
+  t.after(fixture.cleanup);
+
+  const me = await fixture.request('GET', '/api/auth/me');
+  assert.equal(me.status, 200);
+  assert.equal(me.body.user.email, 'leader@test.local');
+
+  const missingToken = await fixture.requestUnauthenticated('GET', '/api/auth/me');
+  assert.equal(missingToken.status, 401);
+  assert.equal(missingToken.body.code, 'AUTH_REQUIRED');
 });

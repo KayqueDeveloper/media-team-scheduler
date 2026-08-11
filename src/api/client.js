@@ -1,3 +1,5 @@
+import { supabase } from '../supabaseClient.js';
+
 const DEFAULT_API_BASE_URL = '/api';
 
 export class ApiError extends Error {
@@ -180,19 +182,31 @@ function shouldTryLegacyEndpoint(error) {
 
 export function createApiClient({
   baseUrl = import.meta.env?.VITE_API_BASE_URL || DEFAULT_API_BASE_URL,
-  fetchImpl = globalThis.fetch
+  fetchImpl = globalThis.fetch,
+  authClient = supabase
 } = {}) {
   const apiBaseUrl = normalizeBaseUrl(baseUrl);
 
+  async function getAccessToken() {
+    if (!authClient) return null;
+    const { data, error } = await authClient.auth.getSession();
+    if (error) throw new ApiError(error.message, { status: 401, payload: error });
+    return data.session?.access_token || null;
+  }
+
   async function request(path, { method = 'GET', body, signal } = {}) {
     if (!fetchImpl) throw new ApiError('O navegador não oferece suporte a requisições HTTP.');
+    const accessToken = await getAccessToken();
+    const headers = new Headers();
+    if (body !== undefined) headers.set('content-type', 'application/json');
+    if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
     let response;
     try {
       response = await fetchImpl(`${apiBaseUrl}${path}`, {
         method,
         signal,
         credentials: 'include',
-        headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+        headers,
         body: body === undefined ? undefined : JSON.stringify(body)
       });
     } catch (error) {
@@ -244,10 +258,20 @@ export function createApiClient({
 
   return {
     async getCurrentUser({ signal } = {}) {
+      if (authClient) {
+        const { data, error } = await authClient.auth.getSession();
+        if (error) throw new ApiError(error.message, { status: 401, payload: error });
+        if (!data.session) return null;
+      }
       const payload = await request('/auth/me', { signal });
       return payload.user || null;
     },
     async login(email, password) {
+      if (authClient) {
+        const { error } = await authClient.auth.signInWithPassword({ email, password });
+        if (error) throw new ApiError(error.message, { status: 401, payload: error });
+        return this.getCurrentUser();
+      }
       const payload = await request('/auth/login', {
         method: 'POST',
         body: { email, password }
@@ -255,7 +279,26 @@ export function createApiClient({
       return payload.user;
     },
     async logout() {
+      if (authClient) {
+        const { error } = await authClient.auth.signOut();
+        if (error) throw new ApiError(error.message, { status: 0, payload: error });
+      }
       await request('/auth/logout', { method: 'POST' });
+    },
+    subscribeToAuthState(onUser, onError = () => {}) {
+      if (!authClient) return () => {};
+      const { data } = authClient.auth.onAuthStateChange((event, session) => {
+        if (event === 'SIGNED_OUT' || !session) {
+          onUser(null);
+          return;
+        }
+        // Keep the callback synchronous and resolve the application profile in
+        // a microtask, as recommended for onAuthStateChange listeners.
+        queueMicrotask(() => {
+          this.getCurrentUser().then(onUser).catch(onError);
+        });
+      });
+      return () => data.subscription.unsubscribe();
     },
     async getMySchedule(year, month, { signal } = {}) {
       const query = new URLSearchParams({ year: String(year), month: String(month) });

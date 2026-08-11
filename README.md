@@ -16,6 +16,24 @@ npm run seed
 
 O seed é destinado ao ambiente de desenvolvimento. Os dados usados pelo painel são servidos pela API e persistidos no SQLite; dados mockados e `localStorage` não são fontes de verdade.
 
+### Supabase Auth
+
+O projeto Supabase usado por esta aplicação é `qrnlzyxfncfpmushhjnn`. Copie o arquivo de exemplo para `.env`:
+
+```bash
+cp .env.example .env
+```
+
+O Vite carrega automaticamente as variáveis `VITE_*` do `.env`. O script `npm run server` também carrega o mesmo arquivo; preencha a chave secreta e as credenciais do líder antes de iniciar:
+
+```bash
+export SUPABASE_URL=https://qrnlzyxfncfpmushhjnn.supabase.co
+export SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+export SUPABASE_SECRET_KEY=sb_secret_...
+```
+
+`SUPABASE_SECRET_KEY` é opcional para validar sessões, mas é necessário para que o líder crie contas de voluntários pela API. Essa chave é exclusiva do backend: nunca a coloque no `.env.local`, no frontend ou em uma variável `VITE_*`.
+
 ## Desenvolvimento
 
 Em um terminal, inicie a API:
@@ -32,15 +50,17 @@ npm run dev
 
 O painel fica disponível em `http://localhost:3000` e encaminha chamadas `/api` para o servidor local.
 
-Na primeira execução, crie o líder inicial informando as variáveis antes de iniciar a API:
+Na primeira execução com Supabase Auth, o líder inicial é criado no Supabase Auth e vinculado ao perfil local quando as variáveis abaixo são informadas antes de iniciar a API:
 
 ```bash
 AUTH_BOOTSTRAP_EMAIL=lider@igreja.org AUTH_BOOTSTRAP_PASSWORD='troque-esta-senha' npm run server
 ```
 
-O líder poderá criar as contas dos voluntários pela API administrativa. As sessões usam cookie `HttpOnly` e as rotas administrativas exigem autenticação de líder.
+O líder poderá criar as contas dos voluntários pela API administrativa. O navegador mantém a sessão do Supabase e envia o access token em `Authorization: Bearer ...`; o Express valida o token com `supabase.auth.getUser()` antes de qualquer rota protegida. O role e o vínculo com o voluntário continuam sendo lidos do perfil local por e-mail verificado.
 
-Se o e-mail já existir e a senha estiver incorreta, pare a API e faça um reset explícito uma única vez:
+Se `SUPABASE_SECRET_KEY` não estiver configurada, crie primeiro o usuário na tela Authentication do Supabase e use o mesmo e-mail do líder bootstrap local.
+
+Se o e-mail local já existir e a senha estiver incorreta no modo legado, pare a API e faça um reset explícito uma única vez:
 
 ```bash
 AUTH_BOOTSTRAP_EMAIL=lider@igreja.org AUTH_BOOTSTRAP_PASSWORD='nova-senha-segura' AUTH_BOOTSTRAP_RESET=true npm run server
@@ -48,13 +68,15 @@ AUTH_BOOTSTRAP_EMAIL=lider@igreja.org AUTH_BOOTSTRAP_PASSWORD='nova-senha-segura
 
 Depois, reinicie a API sem `AUTH_BOOTSTRAP_RESET=true`.
 
-Quando o painel e a API estiverem em origens diferentes, configure as origens permitidas separadas por vírgula e habilite cookies cross-site somente se necessário:
+Com Supabase Auth configurado, alterações de senha devem ser feitas pelo Supabase Auth; `AUTH_BOOTSTRAP_RESET` não altera a senha de um usuário já existente no Supabase.
+
+Quando o painel e a API estiverem em origens diferentes, configure as origens permitidas separadas por vírgula:
 
 ```bash
-CORS_ORIGIN=https://painel.exemplo.org COOKIE_CROSS_SITE=true npm run server
+CORS_ORIGIN=https://painel.exemplo.org npm run server
 ```
 
-Nesse cenário, a API deve estar sob HTTPS para que o cookie `Secure` seja aceito pelo navegador.
+O access token Supabase é enviado pelo frontend em uma requisição CORS; o servidor precisa responder com a origem permitida. O cookie legado continua disponível apenas quando Supabase Auth não está configurado.
 
 ## Verificação
 
