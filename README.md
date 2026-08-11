@@ -32,7 +32,7 @@ export SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 export SUPABASE_SECRET_KEY=sb_secret_...
 ```
 
-`SUPABASE_SECRET_KEY` é opcional para validar sessões, mas é necessário para que o líder crie contas de voluntários pela API. Essa chave é exclusiva do backend: nunca a coloque no `.env.local`, no frontend ou em uma variável `VITE_*`.
+`SUPABASE_PUBLISHABLE_KEY` é usada pelo backend para validar tokens do Supabase. `SUPABASE_SECRET_KEY` é necessária apenas para provisionar contas pela API ou pelo bootstrap. Essa chave é exclusiva do backend: nunca a coloque no `.env.local`, no frontend ou em uma variável `VITE_*`.
 
 ## Desenvolvimento
 
@@ -50,25 +50,17 @@ npm run dev
 
 O painel fica disponível em `http://localhost:3000` e encaminha chamadas `/api` para o servidor local.
 
-Na primeira execução com Supabase Auth, o líder inicial é criado no Supabase Auth e vinculado ao perfil local quando as variáveis abaixo são informadas antes de iniciar a API:
+Na primeira execução, o perfil local do líder é criado quando as variáveis abaixo são informadas antes de iniciar a API:
 
 ```bash
-AUTH_BOOTSTRAP_EMAIL=lider@igreja.org AUTH_BOOTSTRAP_PASSWORD='troque-esta-senha' npm run server
+AUTH_BOOTSTRAP_EMAIL=lider@igreja.org AUTH_BOOTSTRAP_NAME='Líder' npm run server
 ```
 
-O líder poderá criar as contas dos voluntários pela API administrativa. O navegador mantém a sessão do Supabase e envia o access token em `Authorization: Bearer ...`; o Express valida o token com `supabase.auth.getUser()` antes de qualquer rota protegida. O role e o vínculo com o voluntário continuam sendo lidos do perfil local por e-mail verificado.
+O usuário correspondente deve existir no Supabase Auth. Para provisioná-lo automaticamente na primeira execução, informe também `AUTH_BOOTSTRAP_PASSWORD` e mantenha `SUPABASE_SECRET_KEY` configurada. Essa senha é enviada somente ao Supabase Auth e nunca é armazenada no banco local.
 
-Se `SUPABASE_SECRET_KEY` não estiver configurada, crie primeiro o usuário na tela Authentication do Supabase e use o mesmo e-mail do líder bootstrap local.
+O navegador mantém a sessão do Supabase e envia o access token em `Authorization: Bearer ...`; o Express valida o token com `supabase.auth.getUser()` antes de qualquer rota protegida. O role e o vínculo com o voluntário continuam sendo lidos do perfil local por e-mail verificado.
 
-Se o e-mail local já existir e a senha estiver incorreta no modo legado, pare a API e faça um reset explícito uma única vez:
-
-```bash
-AUTH_BOOTSTRAP_EMAIL=lider@igreja.org AUTH_BOOTSTRAP_PASSWORD='nova-senha-segura' AUTH_BOOTSTRAP_RESET=true npm run server
-```
-
-Depois, reinicie a API sem `AUTH_BOOTSTRAP_RESET=true`.
-
-Com Supabase Auth configurado, alterações de senha devem ser feitas pelo Supabase Auth; `AUTH_BOOTSTRAP_RESET` não altera a senha de um usuário já existente no Supabase.
+Alterações e resets de senha devem ser feitos pelo Supabase Auth.
 
 Quando o painel e a API estiverem em origens diferentes, configure as origens permitidas separadas por vírgula:
 
@@ -76,7 +68,7 @@ Quando o painel e a API estiverem em origens diferentes, configure as origens pe
 CORS_ORIGIN=https://painel.exemplo.org npm run server
 ```
 
-O access token Supabase é enviado pelo frontend em uma requisição CORS; o servidor precisa responder com a origem permitida. O cookie legado continua disponível apenas quando Supabase Auth não está configurado.
+O access token Supabase é enviado pelo frontend em uma requisição CORS; o servidor precisa responder com a origem permitida.
 
 ## Produção com Render e Supabase
 
@@ -91,14 +83,15 @@ No Render, configure:
 - `VITE_SUPABASE_PUBLISHABLE_KEY`: chave publishable, usada no build do frontend
 - `SUPABASE_URL`: URL do projeto para validação no backend
 - `SUPABASE_PUBLISHABLE_KEY`: chave publishable usada pelo cliente Supabase do backend
-- `SUPABASE_SECRET_KEY`: chave secret somente no backend; necessária para criar contas pela API
+- `SUPABASE_SECRET_KEY`: chave secret somente no backend; necessária para provisionar contas pela API ou pelo bootstrap
 - `NODE_ENV=production`
 - `AUTH_BOOTSTRAP_EMAIL`: e-mail inicial do líder
-- `AUTH_BOOTSTRAP_PASSWORD`: senha inicial com pelo menos 8 caracteres
+- `AUTH_BOOTSTRAP_NAME`: nome opcional do perfil inicial
+- `AUTH_BOOTSTRAP_PASSWORD`: opcional; senha para provisionar o usuário inicial no Supabase Auth
 
 As variáveis `VITE_*` precisam estar configuradas antes do build do Render, pois o Vite as incorpora no bundle público. Nunca use `SUPABASE_SECRET_KEY` com o prefixo `VITE_`.
 
-O Express serve o build do React e a API no mesmo domínio. Por isso, no cenário recomendado, `CORS_ORIGIN` e `COOKIE_CROSS_SITE` não precisam ser configurados. O frontend continua usando `/api` como base.
+O Express serve o build do React e a API no mesmo domínio. Por isso, no cenário recomendado, `CORS_ORIGIN` não precisa ser configurado. O frontend continua usando `/api` como base.
 
 Para migrar o banco SQLite local para um projeto Supabase vazio, faça um backup antes e execute:
 

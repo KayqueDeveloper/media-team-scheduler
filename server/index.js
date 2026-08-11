@@ -44,17 +44,13 @@ import { closeDatabase, getDatabase } from './db/index.js';
 import { ROLE_LIST, SHIFT_LIST } from './db/constants.js';
 import { generateSchedule, getSundaysInMonth } from './solver/scheduler.js';
 import {
-  authenticateUser,
-  cleanupExpiredSessions,
-  createSession,
   createUser,
-  resetBootstrapLeader,
+  ensureBootstrapProfile,
   getUserById,
   getUserIdByVolunteerId,
-  revokeSession,
   deleteUserById
 } from './db/authRepository.js';
-import { clearSessionCookie, parseCookies, rateLimitLogin, requireAuth, requireRole, setSessionCookie } from './auth.js';
+import { requireAuth, requireRole } from './auth.js';
 import {
   ensureSupabaseUser,
   isSupabaseAdminConfigured,
@@ -125,18 +121,17 @@ function getBootstrapAdminFromEnv() {
   const email = process.env.AUTH_BOOTSTRAP_EMAIL?.trim() || '';
   const password = process.env.AUTH_BOOTSTRAP_PASSWORD || '';
   const name = process.env.AUTH_BOOTSTRAP_NAME || 'Líder';
-  if (!email && !password) return undefined;
-  if (!email || !password) {
-    throw new Error('AUTH_BOOTSTRAP_EMAIL and AUTH_BOOTSTRAP_PASSWORD must be provided together.');
+  if (!email) {
+    if (password) throw new Error('AUTH_BOOTSTRAP_EMAIL is required when AUTH_BOOTSTRAP_PASSWORD is provided.');
+    return undefined;
   }
-  if (password.length < 8) {
+  if (password && password.length < 8) {
     throw new Error('AUTH_BOOTSTRAP_PASSWORD must contain at least 8 characters.');
   }
   return {
     email,
     password,
-    name,
-    resetExisting: process.env.AUTH_BOOTSTRAP_RESET === 'true'
+    name
   };
 }
 
@@ -245,7 +240,7 @@ export function createApp({
   app.locals.supabaseAuthClient = supabaseAuthClient;
 
   app.locals.supabaseBootstrapReady = Promise.resolve(null);
-  if (bootstrapAdmin && isSupabaseAuthConfigured() && isSupabaseAdminConfigured()) {
+  if (bootstrapAdmin?.password && isSupabaseAuthConfigured() && isSupabaseAdminConfigured()) {
     app.locals.supabaseBootstrapReady = ensureSupabaseUser(bootstrapAdmin).catch(error => {
       console.warn(`Could not provision Supabase bootstrap user: ${error.message}`);
       return null;
@@ -254,8 +249,7 @@ export function createApp({
 
   app.locals.ready = (async () => {
     await db.ready;
-    if (bootstrapAdmin) await resetBootstrapLeader(bootstrapAdmin);
-    await cleanupExpiredSessions(now());
+    if (bootstrapAdmin) await ensureBootstrapProfile(bootstrapAdmin);
     await app.locals.supabaseBootstrapReady;
   })();
 
@@ -270,8 +264,7 @@ export function createApp({
       origin(origin, callback) {
         if (!origin || allowedCorsOrigins.includes(origin)) return callback(null, true);
         return callback(new Error('Origin is not allowed by CORS.'));
-      },
-      credentials: true
+      }
     }));
   }
   app.use(express.json({ limit: '100kb' }));
@@ -293,31 +286,6 @@ export function createApp({
     } catch (error) {
       next(error);
     }
-  });
-
-  app.post('/api/auth/login', rateLimitLogin, async (req, res) => {
-    if (isSupabaseAuthConfigured()) {
-      return res.status(410).json({
-        error: 'Use Supabase Auth signInWithPassword from the client.',
-        code: 'SUPABASE_AUTH_ENABLED'
-      });
-    }
-    try {
-      const user = await authenticateUser(req.body?.email, req.body?.password);
-      if (!user) return res.status(401).json({ error: 'Invalid email or password.', code: 'INVALID_CREDENTIALS' });
-      const currentTime = now();
-      const session = await createSession(user.id, currentTime);
-      setSessionCookie(res, session.token, session.expiresAt, currentTime);
-      return res.json({ user, expiresAt: session.expiresAt });
-    } catch (error) {
-      return res.status(400).json({ error: error.message });
-    }
-  });
-
-  app.post('/api/auth/logout', async (req, res) => {
-    await revokeSession(parseCookies(req.headers.cookie).session);
-    clearSessionCookie(res);
-    res.status(204).end();
   });
 
   app.get('/api/auth/me', requireAuth, (req, res) => res.json({ user: req.user }));

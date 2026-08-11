@@ -8,33 +8,39 @@ import test from 'node:test';
 import { createApp } from './index.js';
 
 async function createHttpFixture(options = {}) {
-  const { databasePath, ...appOptions } = options;
+  const { databasePath, supabaseAuthClient: providedAuthClient, ...appOptions } = options;
   const ownsDirectory = !databasePath;
   const directory = ownsDirectory
     ? await mkdtemp(path.join(os.tmpdir(), 'media-scheduler-api-'))
     : path.dirname(databasePath);
+  const defaultAuthClient = {
+    auth: {
+      async getUser(token) {
+        const prefix = 'test-token:';
+        const email = token.startsWith(prefix) ? token.slice(prefix.length) : '';
+        return email
+          ? { data: { user: { id: `supabase-${email}`, email } }, error: null }
+          : { data: { user: null }, error: new Error('Invalid test token.') };
+      }
+    }
+  };
+  const supabaseAuthClient = providedAuthClient || defaultAuthClient;
   const app = createApp({
     dbPath: databasePath || path.join(directory, 'test.sqlite'),
     now: () => new Date('2026-06-20T12:00:00Z'),
-    bootstrapAdmin: { email: 'leader@test.local', password: 'leader-password', name: 'Test Leader' },
+    bootstrapAdmin: { email: 'leader@test.local', name: 'Test Leader' },
+    supabaseAuthClient,
     ...appOptions
   });
   const server = app.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const { port } = server.address();
 
-  let cookie = '';
-  const loginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email: 'leader@test.local', password: 'leader-password' })
-  });
-  cookie = loginResponse.headers.get('set-cookie')?.split(';')[0] || '';
+  let authToken = providedAuthClient ? 'test-supabase-token' : 'test-token:leader@test.local';
 
   async function request(method, pathname, body) {
     const headers = { ...(body === undefined ? {} : { 'content-type': 'application/json' }) };
-    if (cookie) headers.cookie = cookie;
-    if (appOptions.supabaseAuthClient) headers.authorization = 'Bearer test-supabase-token';
+    if (authToken) headers.authorization = `Bearer ${authToken}`;
     const response = await fetch(`http://127.0.0.1:${port}${pathname}`, {
       method,
       headers,
@@ -54,14 +60,8 @@ async function createHttpFixture(options = {}) {
     return { status: response.status, body: payload };
   }
 
-  async function loginAs(email, password) {
-    const response = await fetch(`http://127.0.0.1:${port}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email, password })
-    });
-    cookie = response.headers.get('set-cookie')?.split(';')[0] || '';
-    return { status: response.status, body: await response.json() };
+  async function loginAs(email) {
+    authToken = `test-token:${email}`;
   }
 
   async function cleanup() {
@@ -80,6 +80,12 @@ test('HTTP API enforces authentication and leader authorization', async t => {
   const unauthenticated = await fixture.requestUnauthenticated('GET', '/api/volunteers');
   assert.equal(unauthenticated.status, 401);
 
+  const legacyLogin = await fixture.requestUnauthenticated('POST', '/api/auth/login', {
+    email: 'leader@test.local',
+    password: 'leader-password'
+  });
+  assert.equal(legacyLogin.status, 404);
+
   const volunteer = await fixture.request('POST', '/api/volunteers', { name: 'Voluntário com conta', email: 'volunteer@test.local' });
   const account = await fixture.request('POST', '/api/admin/users', {
     name: 'Voluntário com conta',
@@ -91,8 +97,7 @@ test('HTTP API enforces authentication and leader authorization', async t => {
   assert.equal(account.status, 201);
   assert.equal(account.body.user.role, 'VOLUNTEER');
 
-  const volunteerLogin = await fixture.loginAs('volunteer@test.local', 'volunteer-password');
-  assert.equal(volunteerLogin.status, 200);
+  await fixture.loginAs('volunteer@test.local');
   const forbidden = await fixture.request('GET', '/api/volunteers');
   assert.equal(forbidden.status, 403);
 
@@ -100,10 +105,6 @@ test('HTTP API enforces authentication and leader authorization', async t => {
   assert.equal(me.status, 200);
   assert.equal(me.body.user.volunteerId, volunteer.body.id);
 
-  const logout = await fixture.request('POST', '/api/auth/logout');
-  assert.equal(logout.status, 204);
-  const afterLogout = await fixture.request('GET', '/api/auth/me');
-  assert.equal(afterLogout.status, 401);
 });
 
 test('volunteer API isolates personal data and applies an accepted exchange as a new publication version', async t => {
@@ -143,7 +144,7 @@ test('volunteer API isolates personal data and applies an accepted exchange as a
   assert.equal(published.status, 200);
   const assignmentId = published.body.assignments.find(item => item.volunteer_id === requester.body.id && item.role === 'VMIX').id;
 
-  await fixture.loginAs('requester@test.local', 'requester-password');
+  await fixture.loginAs('requester@test.local');
   const personalSchedule = await fixture.request('GET', '/api/me/schedule?year=2026&month=7');
   assert.equal(personalSchedule.status, 200);
   assert.equal(personalSchedule.body.assignments.length, 1);
@@ -164,7 +165,7 @@ test('volunteer API isolates personal data and applies an accepted exchange as a
   assert.equal(exchange.status, 201);
   const exchangeId = exchange.body.exchange.id;
 
-  await fixture.loginAs('target@test.local', 'target-password');
+  await fixture.loginAs('target@test.local');
   const targetNotifications = await fixture.request('GET', '/api/me/notifications');
   assert.equal(targetNotifications.status, 200);
   assert.equal(targetNotifications.body.notifications[0].type, 'EXCHANGE_REQUESTED');
@@ -179,7 +180,7 @@ test('volunteer API isolates personal data and applies an accepted exchange as a
   assert.equal(targetSchedule.body.assignments.length, 1);
   assert.equal(targetSchedule.body.assignments[0].volunteer_id, target.body.id);
 
-  await fixture.loginAs('leader@test.local', 'leader-password');
+  await fixture.loginAs('leader@test.local');
   const adminExchanges = await fixture.request('GET', '/api/admin/exchanges');
   assert.equal(adminExchanges.status, 200);
   assert.equal(adminExchanges.body.exchanges[0].status, 'ACCEPTED');
@@ -189,7 +190,7 @@ test('volunteer API isolates personal data and applies an accepted exchange as a
   assert.equal(versions.body[0].assignments[0].volunteer_id, requester.body.id);
   assert.equal(versions.body[1].assignments[0].volunteer_id, target.body.id);
 
-  await fixture.loginAs('requester@test.local', 'requester-password');
+  await fixture.loginAs('requester@test.local');
   const requesterNotifications = await fixture.request('GET', '/api/me/notifications');
   assert.equal(requesterNotifications.body.notifications[0].type, 'EXCHANGE_ACCEPTED');
 });
@@ -431,25 +432,6 @@ test('HTTP API persists a draft and preserves immutable publication versions', a
   assert.equal(versions.body[0].assignments.length, 2);
   assert.equal(versions.body[0].assignments[0].volunteer_name, 'Mentora N3');
   assert.equal(versions.body[1].assignments[0].volunteer_name, 'Mentora N3 Renomeada');
-});
-
-test('HTTP API rate-limits repeated login attempts per email and IP', async t => {
-  const fixture = await createHttpFixture();
-  t.after(fixture.cleanup);
-  const email = `unknown-${Date.now()}@test.local`;
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const response = await fixture.requestUnauthenticated('POST', '/api/auth/login', {
-      email,
-      password: 'wrong-password'
-    });
-    assert.equal(response.status, 401);
-  }
-  const limited = await fixture.requestUnauthenticated('POST', '/api/auth/login', {
-    email,
-    password: 'wrong-password'
-  });
-  assert.equal(limited.status, 429);
-  assert.equal(limited.body.code, 'LOGIN_RATE_LIMITED');
 });
 
 test('HTTP API validates Supabase access tokens before resolving the local profile', async t => {

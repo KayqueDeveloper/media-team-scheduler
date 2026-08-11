@@ -205,7 +205,6 @@ export function createApiClient({
       response = await fetchImpl(`${apiBaseUrl}${path}`, {
         method,
         signal,
-        credentials: 'include',
         headers,
         body: body === undefined ? undefined : JSON.stringify(body)
       });
@@ -258,32 +257,25 @@ export function createApiClient({
 
   return {
     async getCurrentUser({ signal } = {}) {
-      if (authClient) {
-        const { data, error } = await authClient.auth.getSession();
-        if (error) throw new ApiError(error.message, { status: 401, payload: error });
-        if (!data.session) return null;
-      }
+      if (!authClient) return null;
+      const { data, error } = await authClient.auth.getSession();
+      if (error) throw new ApiError(error.message, { status: 401, payload: error });
+      if (!data.session) return null;
       const payload = await request('/auth/me', { signal });
       return payload.user || null;
     },
     async login(email, password) {
-      if (authClient) {
-        const { error } = await authClient.auth.signInWithPassword({ email, password });
-        if (error) throw new ApiError(error.message, { status: 401, payload: error });
-        return this.getCurrentUser();
+      if (!authClient) {
+        throw new ApiError('Supabase Auth não está configurado.', { status: 503 });
       }
-      const payload = await request('/auth/login', {
-        method: 'POST',
-        body: { email, password }
-      });
-      return payload.user;
+      const { error } = await authClient.auth.signInWithPassword({ email, password });
+      if (error) throw new ApiError(error.message, { status: 401, payload: error });
+      return this.getCurrentUser();
     },
     async logout() {
-      if (authClient) {
-        const { error } = await authClient.auth.signOut();
-        if (error) throw new ApiError(error.message, { status: 0, payload: error });
-      }
-      await request('/auth/logout', { method: 'POST' });
+      if (!authClient) return;
+      const { error } = await authClient.auth.signOut();
+      if (error) throw new ApiError(error.message, { status: 0, payload: error });
     },
     subscribeToAuthState(onUser, onError = () => {}) {
       if (!authClient) return () => {};

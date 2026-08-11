@@ -2,11 +2,8 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { closeDatabase, getDatabase } from './index.js';
 import { createVolunteer, replaceVolunteerProficiencies } from './repository.js';
-import { createUser } from './authRepository.js';
 
 const inputPath = process.argv[2] || process.env.IMPORT_FILE;
-const createAccounts = process.env.IMPORT_CREATE_ACCOUNTS === 'true';
-const defaultPassword = process.env.IMPORT_DEFAULT_PASSWORD || '123456';
 
 function parseInput(contents) {
   const trimmed = contents.trim();
@@ -62,17 +59,6 @@ async function importVolunteers(records) {
       await replaceVolunteerProficiencies(volunteer.id, record.proficiencies || {});
     }
 
-    if (createAccounts && !await db.one(`SELECT id FROM users WHERE volunteer_id = ?`, [volunteer.id])) {
-      await createUser({
-        name: record.name.trim(),
-        email: volunteer.email,
-        password: defaultPassword,
-        role: 'VOLUNTEER',
-        volunteerId: volunteer.id,
-        active: record.active !== false,
-        allowWeakPassword: true
-      });
-    }
     imported.push({ name: record.name, id: volunteer.id, action: existing ? 'existing' : 'created' });
   }
 

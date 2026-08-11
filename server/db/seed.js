@@ -51,7 +51,6 @@ export default async function seedDatabase() {
   // Reset existing tables
   await db.ready;
   await db.transaction(async tx => {
-    await tx.run(`DELETE FROM sessions`);
     await tx.run(`DELETE FROM users`);
     await tx.run(`DELETE FROM assignments`);
     await tx.run(`DELETE FROM unavailabilities`);

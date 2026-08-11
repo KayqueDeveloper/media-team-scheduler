@@ -151,7 +151,7 @@ test('expõe a mensagem retornada pela API em falhas', async () => {
   );
 });
 
-test('expõe os recursos do portal e envia credenciais de sessão', async () => {
+test('expõe os recursos do portal sem depender de cookies locais', async () => {
   const calls = [];
   const client = createApiClient({
     fetchImpl: async (url, init) => {
@@ -173,7 +173,7 @@ test('expõe os recursos do portal e envia credenciais de sessão', async () => 
   assert.equal(exchanges[0].targetVolunteerId, '8');
   assert.equal(notifications[0].message, 'Nova troca');
   assert.equal(accepted.status, 'ACCEPTED');
-  assert.ok(calls.every(call => call.init.credentials === 'include'));
+  assert.ok(calls.every(call => call.init.credentials === undefined));
 });
 
 test('normaliza flags booleanas serializadas como strings', async () => {
@@ -235,4 +235,13 @@ test('usa a sessão Supabase para autenticar o login e proteger as chamadas da A
   assert.ok(calls.every(call => call.init.headers.get('Authorization') === 'Bearer supabase-access-token'));
   assert.ok(authEvents.some(([event]) => event === 'signOut'));
   assert.ok(authEvents.some(([event]) => event === 'onAuthStateChange'));
+});
+
+test('não oferece fallback de login quando o Supabase não está configurado', async () => {
+  const client = createApiClient({ fetchImpl: async () => jsonResponse({}) });
+
+  await assert.rejects(
+    () => client.login('leader@example.com', 'password'),
+    error => error.status === 503 && /Supabase Auth/.test(error.message)
+  );
 });
