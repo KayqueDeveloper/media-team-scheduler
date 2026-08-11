@@ -10,7 +10,8 @@ import {
   CheckCircle2, 
   AlertCircle,
   Printer,
-  Grid
+  Grid,
+  ArrowLeftRight
 } from 'lucide-react';
 
 export const DashboardHeader = ({
@@ -24,7 +25,8 @@ export const DashboardHeader = ({
   onOpenPdfModal,
   disabled = false,
   busyAction = '',
-  hasSchedule = false
+  hasSchedule = false,
+  onLogout
 }) => {
   return (
     <header className="dashboard-header glass-panel">
@@ -89,6 +91,9 @@ export const DashboardHeader = ({
             <Download size={16} />
             Exportação PDF
           </button>
+          <button className="btn btn-secondary" onClick={onLogout} disabled={disabled}>
+            Sair
+          </button>
         </div>
       </div>
 
@@ -128,6 +133,15 @@ export const DashboardHeader = ({
         >
           <Printer size={16} />
           Visualização para Impressão
+        </button>
+
+        <button
+          className={`tab-btn ${activeTab === 'exchanges' ? 'active' : ''}`}
+          onClick={() => onTabChange('exchanges')}
+          disabled={disabled}
+        >
+          <ArrowLeftRight size={16} />
+          Trocas
         </button>
       </nav>
     </header>

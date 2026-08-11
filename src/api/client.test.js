@@ -150,3 +150,43 @@ test('expõe a mensagem retornada pela API em falhas', async () => {
     /Data de corte encerrada/
   );
 });
+
+test('expõe os recursos do portal e envia credenciais de sessão', async () => {
+  const calls = [];
+  const client = createApiClient({
+    fetchImpl: async (url, init) => {
+      calls.push({ url, init });
+      if (url === '/api/me/schedule?year=2026&month=8') return jsonResponse({ assignments: [{ id: 4, volunteer_id: 7, date: '2026-08-09', shift: 'NIGHT', role: 'VMIX' }] });
+      if (url === '/api/me/exchanges') return jsonResponse({ exchanges: [{ id: 9, requester_id: 7, target_volunteer_id: 8, status: 'PENDING' }] });
+      if (url === '/api/me/notifications') return jsonResponse({ notifications: [{ id: 2, message: 'Nova troca' }] });
+      if (url === '/api/exchanges/9/accept') return jsonResponse({ exchange: { id: 9, status: 'ACCEPTED' } });
+      return jsonResponse({ volunteers: [{ id: 8, name: 'Substituto' }] });
+    }
+  });
+
+  const schedule = await client.getMySchedule(2026, 8);
+  const exchanges = await client.getMyExchanges();
+  const notifications = await client.getMyNotifications();
+  const accepted = await client.acceptExchange(9);
+
+  assert.equal(schedule[0].volunteerId, '7');
+  assert.equal(exchanges[0].targetVolunteerId, '8');
+  assert.equal(notifications[0].message, 'Nova troca');
+  assert.equal(accepted.status, 'ACCEPTED');
+  assert.ok(calls.every(call => call.init.credentials === 'include'));
+});
+
+test('normaliza flags booleanas serializadas como strings', async () => {
+  const client = createApiClient({
+    fetchImpl: async (url) => {
+      if (url === '/api/volunteers') return jsonResponse([{ id: 1, name: 'Inativa', active: '0' }]);
+      if (url.startsWith('/api/me/schedule')) return jsonResponse({ assignments: [{ id: 2, volunteer_id: 1, is_trainee: '0' }] });
+      return jsonResponse({});
+    }
+  });
+
+  const volunteers = await client.getVolunteers();
+  const schedule = await client.getMySchedule(2026, 8);
+  assert.equal(volunteers[0].active, false);
+  assert.equal(schedule[0].isTrainee, false);
+});

@@ -224,11 +224,11 @@ export const VolunteerManager = ({
 
       {/* Modal Add Volunteer */}
       {isAddModalOpen && (
-        <div className="modal-overlay">
-          <div className="modal-content">
+        <div className="modal-overlay" role="presentation">
+          <div className="modal-content" role="dialog" aria-modal="true" aria-labelledby="volunteer-modal-title">
             <div className="modal-header">
-              <h3>{editingVolunteerId ? 'Editar Voluntário' : 'Cadastrar Novo Voluntário'}</h3>
-              <button className="close-btn" onClick={() => setIsAddModalOpen(false)}>✕</button>
+              <h3 id="volunteer-modal-title">{editingVolunteerId ? 'Editar Voluntário' : 'Cadastrar Novo Voluntário'}</h3>
+              <button type="button" className="close-btn" aria-label="Fechar diálogo" onClick={() => setIsAddModalOpen(false)}>✕</button>
             </div>
             <form onSubmit={handleCreateVolunteer}>
               <div className="form-group">

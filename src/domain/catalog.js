@@ -17,6 +17,16 @@ export const MONTH_NAMES = [
   'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
 ];
 
+export function getCurrentBusinessMonth(now = new Date(), timeZone = 'America/Sao_Paulo') {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: 'numeric'
+  }).formatToParts(now);
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return { year: Number(values.year), monthIndex: Number(values.month) - 1 };
+}
+
 export function getSundaysForMonth(year, monthIndex) {
   const sundays = [];
   const daysInMonth = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();

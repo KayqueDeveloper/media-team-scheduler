@@ -7,7 +7,10 @@ import { PdfExporter } from './components/PdfExporter';
 import { ScheduleMatrix } from './components/ScheduleMatrix';
 import { UnavailabilityManager } from './components/UnavailabilityManager';
 import { VolunteerManager } from './components/VolunteerManager';
-import { getSundaysForMonth, MONTH_NAMES, ROLES, SHIFTS } from './domain/catalog';
+import { LoginPage } from './components/LoginPage';
+import { VolunteerPortal } from './components/VolunteerPortal';
+import { AdminExchangeManager } from './components/AdminExchangeManager';
+import { getCurrentBusinessMonth, getSundaysForMonth, MONTH_NAMES, ROLES, SHIFTS } from './domain/catalog';
 import {
   collectScheduleWarnings,
   ensureScheduleSlots,
@@ -35,15 +38,15 @@ function mergeScheduleResponse(remote, fallback, sundays) {
     ...remote,
     id: remote.id || fallback.id,
     matrix: ensureScheduleSlots(hasMatrixData(remote.matrix) ? remote.matrix : fallback.matrix, sundays, SHIFTS, ROLES),
-    lockedSlots: remote.lockedSlots?.length ? remote.lockedSlots : fallback.lockedSlots,
-    warnings: remote.warnings?.length ? remote.warnings : fallback.warnings
+    lockedSlots: remote.lockedSlots !== undefined ? remote.lockedSlots : fallback.lockedSlots,
+    warnings: remote.warnings !== undefined ? remote.warnings : fallback.warnings
   };
 }
 
 export function App() {
-  const today = useMemo(() => new Date(), []);
-  const [monthIndex, setMonthIndex] = useState(today.getMonth());
-  const [year, setYear] = useState(today.getFullYear());
+  const businessMonth = useMemo(() => getCurrentBusinessMonth(), []);
+  const [monthIndex, setMonthIndex] = useState(businessMonth.monthIndex);
+  const [year, setYear] = useState(businessMonth.year);
   const [activeTab, setActiveTab] = useState('schedule');
   const [volunteers, setVolunteers] = useState([]);
   const [unavailabilities, setUnavailabilities] = useState([]);
@@ -54,6 +57,20 @@ export function App() {
   const [loadError, setLoadError] = useState('');
   const [busyAction, setBusyAction] = useState('');
   const [reloadToken, setReloadToken] = useState(0);
+  const [adminExchanges, setAdminExchanges] = useState([]);
+  const [authUser, setAuthUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState('');
+  const [authBusy, setAuthBusy] = useState(false);
+
+  useEffect(() => {
+    api.getCurrentUser()
+      .then(setAuthUser)
+      .catch(error => {
+        if (error.status !== 401) setAuthError(error.message);
+      })
+      .finally(() => setAuthLoading(false));
+  }, []);
 
   const sundays = useMemo(() => getSundaysForMonth(year, monthIndex), [year, monthIndex]);
   const month = monthIndex + 1;
@@ -62,6 +79,7 @@ export function App() {
   const isBusy = Boolean(busyAction);
 
   useEffect(() => {
+    if (!authUser || authUser.role !== 'LEADER') return undefined;
     const controller = new AbortController();
     setLoading(true);
     setLoadError('');
@@ -79,14 +97,76 @@ export function App() {
         setPublishedVersions(data.versions || []);
       })
       .catch(error => {
-        if (error.name !== 'AbortError') setLoadError(error.message);
+        if (error.name === 'AbortError') return;
+        if (error.status === 401) {
+          setAuthUser(null);
+          setAuthError('Sua sessão expirou. Entre novamente para continuar.');
+        } else {
+          setLoadError(error.message);
+        }
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
 
     return () => controller.abort();
-  }, [year, month, sundays, reloadToken]);
+  }, [authUser, year, month, sundays, reloadToken]);
+
+  useEffect(() => {
+    if (!authUser || authUser.role !== 'LEADER') return undefined;
+    let cancelled = false;
+    api.getAdminExchanges()
+      .then(items => { if (!cancelled) setAdminExchanges(items); })
+      .catch(error => {
+        if (!cancelled) {
+          if (error.status === 401) {
+            setAuthUser(null);
+            setAuthError('Sua sessão expirou. Entre novamente para continuar.');
+          }
+          setAdminExchanges([]);
+          if (error.status !== 401) {
+            setNotification({ type: 'error', message: `Não foi possível carregar as trocas: ${error.message}` });
+          }
+        }
+      });
+    return () => { cancelled = true; };
+  }, [authUser, reloadToken]);
+
+  async function handleLogin(email, password) {
+    setAuthBusy(true);
+    setAuthError('');
+    try {
+      setAuthUser(await api.login(email, password));
+    } catch (error) {
+      setAuthError(error.message);
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function handleLogout() {
+    try {
+      await api.logout();
+    } catch (error) {
+      setAuthError(error.message);
+    } finally {
+      setAuthUser(null);
+    }
+  }
+
+  if (authLoading) return <div className="app-state"><LoaderCircle className="spin" size={30} /><p>Verificando acesso…</p></div>;
+  if (!authUser) return <LoginPage onLogin={handleLogin} error={authError} busy={authBusy} />;
+  if (authUser.role === 'VOLUNTEER') return (
+    <VolunteerPortal
+      user={authUser}
+      api={api}
+      onLogout={handleLogout}
+      onSessionExpired={() => {
+        setAuthUser(null);
+        setAuthError('Sua sessão expirou. Entre novamente para continuar.');
+      }}
+    />
+  );
 
   function notify(type, message) {
     setNotification({ type, message });
@@ -100,6 +180,10 @@ export function App() {
       await operation();
       return true;
     } catch (error) {
+      if (error.status === 401) {
+        setAuthUser(null);
+        setAuthError('Sua sessão expirou. Entre novamente para continuar.');
+      }
       notify('error', error.message);
       return false;
     } finally {
@@ -312,14 +396,15 @@ export function App() {
 
   return (
     <div className="app-container">
-      <DashboardHeader
+          <DashboardHeader
         currentMonth={currentMonthLabel}
         status={scheduleState.status}
         activeTab={activeTab}
         onMonthChange={handleMonthChange}
         onToggleStatus={handlePublishOrReopen}
         onGenerateAuto={handleGenerateAutoSchedule}
-        onTabChange={setActiveTab}
+            onTabChange={setActiveTab}
+            onLogout={handleLogout}
         onOpenPdfModal={() => setActiveTab('print')}
         disabled={loading || isBusy}
         busyAction={busyAction}
@@ -401,6 +486,10 @@ export function App() {
                 version={scheduleState.publishedVersion}
                 versions={publishedVersions}
               />
+            )}
+
+            {activeTab === 'exchanges' && (
+              <AdminExchangeManager exchanges={adminExchanges} />
             )}
           </>
         )}

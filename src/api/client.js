@@ -20,6 +20,14 @@ function valueFrom(source, ...keys) {
   return undefined;
 }
 
+function normalizeBoolean(value, fallback = false) {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') return ['true', '1', 'yes', 'sim'].includes(value.trim().toLowerCase());
+  return Boolean(value);
+}
+
 function normalizeProficiencies(raw = {}) {
   if (Array.isArray(raw)) {
     return raw.reduce((result, item) => {
@@ -39,7 +47,7 @@ export function normalizeVolunteer(raw) {
     name: raw.name || '',
     email: raw.email || '',
     phone: raw.phone || '',
-    active: Boolean(valueFrom(raw, 'active', 'is_active') ?? true),
+    active: normalizeBoolean(valueFrom(raw, 'active', 'is_active'), true),
     allowedShift: valueFrom(raw, 'allowedShift', 'allowed_shift') || 'ALL',
     maxMonthlyFrequency: Number(valueFrom(raw, 'maxMonthlyFrequency', 'max_monthly_frequency', 'maxShiftsPerMonth')) || 2,
     proficiencies: normalizeProficiencies(raw.proficiencies)
@@ -57,6 +65,19 @@ export function normalizeUnavailability(raw) {
   };
 }
 
+export function normalizeExchange(raw) {
+  return {
+    ...raw,
+    id: String(raw.id),
+    assignmentId: String(valueFrom(raw, 'assignmentId', 'assignment_id')),
+    requesterId: String(valueFrom(raw, 'requesterId', 'requester_id')),
+    targetVolunteerId: String(valueFrom(raw, 'targetVolunteerId', 'target_volunteer_id')),
+    status: raw.status || 'PENDING',
+    requesterName: raw.requesterName || raw.requester_name || '',
+    targetVolunteerName: raw.targetVolunteerName || raw.target_volunteer_name || ''
+  };
+}
+
 export function assignmentsToMatrix(assignments = []) {
   return assignments.reduce((matrix, raw) => {
     const date = raw.date;
@@ -68,7 +89,7 @@ export function assignmentsToMatrix(assignments = []) {
     matrix[date] ??= {};
     matrix[date][shift] ??= {};
     matrix[date][shift][role] ??= { main: '', trainee: '' };
-    const isTrainee = Boolean(valueFrom(raw, 'isTrainee', 'is_trainee'));
+    const isTrainee = normalizeBoolean(valueFrom(raw, 'isTrainee', 'is_trainee'));
     matrix[date][shift][role][isTrainee ? 'trainee' : 'main'] = String(volunteerId);
     return matrix;
   }, {});
@@ -170,6 +191,7 @@ export function createApiClient({
       response = await fetchImpl(`${apiBaseUrl}${path}`, {
         method,
         signal,
+        credentials: 'include',
         headers: body === undefined ? undefined : { 'content-type': 'application/json' },
         body: body === undefined ? undefined : JSON.stringify(body)
       });
@@ -221,6 +243,81 @@ export function createApiClient({
   }
 
   return {
+    async getCurrentUser({ signal } = {}) {
+      const payload = await request('/auth/me', { signal });
+      return payload.user || null;
+    },
+    async login(email, password) {
+      const payload = await request('/auth/login', {
+        method: 'POST',
+        body: { email, password }
+      });
+      return payload.user;
+    },
+    async logout() {
+      await request('/auth/logout', { method: 'POST' });
+    },
+    async getMySchedule(year, month, { signal } = {}) {
+      const query = new URLSearchParams({ year: String(year), month: String(month) });
+      const payload = await request(`/me/schedule?${query}`, { signal });
+      return (payload.assignments || []).map(item => ({
+        ...item,
+        volunteerId: String(valueFrom(item, 'volunteerId', 'volunteer_id')),
+        isTrainee: normalizeBoolean(valueFrom(item, 'isTrainee', 'is_trainee'))
+      }));
+    },
+    async getVolunteerDirectory({ signal } = {}) {
+      const payload = await request('/me/directory', { signal });
+      return payload.volunteers || [];
+    },
+    async getMyUnavailabilities({ signal } = {}) {
+      const payload = await request('/me/unavailabilities', { signal });
+      return (payload.unavailabilities || []).map(normalizeUnavailability);
+    },
+    async createMyUnavailability(data) {
+      return normalizeUnavailability(await request('/me/unavailabilities', { method: 'POST', body: data }));
+    },
+    async updateMyUnavailability(id, data) {
+      return normalizeUnavailability(await request(`/me/unavailabilities/${id}`, { method: 'PATCH', body: data }));
+    },
+    async deleteMyUnavailability(id) {
+      return request(`/me/unavailabilities/${id}`, { method: 'DELETE' });
+    },
+    async getMyExchanges({ signal } = {}) {
+      const payload = await request('/me/exchanges', { signal });
+      return (payload.exchanges || []).map(normalizeExchange);
+    },
+    async createExchange(data) {
+      const payload = await request('/exchanges', { method: 'POST', body: data });
+      return normalizeExchange(payload.exchange);
+    },
+    async acceptExchange(id) {
+      const payload = await request(`/exchanges/${id}/accept`, { method: 'POST' });
+      return normalizeExchange(payload.exchange);
+    },
+    async rejectExchange(id, rejectionReason) {
+      const payload = await request(`/exchanges/${id}/reject`, { method: 'POST', body: { rejectionReason } });
+      return normalizeExchange(payload.exchange);
+    },
+    async cancelExchange(id) {
+      const payload = await request(`/exchanges/${id}/cancel`, { method: 'POST' });
+      return normalizeExchange(payload.exchange);
+    },
+    async getMyNotifications({ signal } = {}) {
+      const payload = await request('/me/notifications', { signal });
+      return payload.notifications || [];
+    },
+    async markNotificationRead(id) {
+      const payload = await request(`/me/notifications/${id}/read`, { method: 'POST' });
+      return payload.notification;
+    },
+    async markAllNotificationsRead() {
+      return request('/me/notifications/read-all', { method: 'POST' });
+    },
+    async getAdminExchanges({ signal } = {}) {
+      const payload = await request('/admin/exchanges', { signal });
+      return (payload.exchanges || []).map(normalizeExchange);
+    },
     async loadMonth(year, month, { signal } = {}) {
       const volunteersPromise = getVolunteers({ signal });
       const unavailabilitiesPromise = getUnavailabilities(year, month, { signal });

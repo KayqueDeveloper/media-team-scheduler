@@ -138,11 +138,11 @@ export const UnavailabilityManager = ({
 
       {/* Modal Add Unavailability */}
       {isAddModalOpen && (
-        <div className="modal-overlay">
-          <div className="modal-content">
+        <div className="modal-overlay" role="presentation">
+          <div className="modal-content" role="dialog" aria-modal="true" aria-labelledby="unavailability-modal-title">
             <div className="modal-header">
-              <h3>Registrar Indisponibilidade</h3>
-              <button className="close-btn" onClick={() => setIsAddModalOpen(false)}>✕</button>
+              <h3 id="unavailability-modal-title">Registrar Indisponibilidade</h3>
+              <button type="button" className="close-btn" aria-label="Fechar diálogo" onClick={() => setIsAddModalOpen(false)}>✕</button>
             </div>
             <form onSubmit={handleCreateUnavailability}>
               <div className="form-group">

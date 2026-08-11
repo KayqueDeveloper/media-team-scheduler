@@ -176,6 +176,7 @@ export const ScheduleMatrix = ({
                                     type="button"
                                     onClick={() => onToggleLockSlot && onToggleLockSlot(sunday.date, shiftItem.id, role.id)}
                                     disabled={readOnly}
+                                    aria-label={isLocked ? `Destravar vaga de ${role.name} em ${sunday.formatted} no turno ${shiftItem.label}` : `Travar vaga de ${role.name} em ${sunday.formatted} no turno ${shiftItem.label}`}
                                     style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: isLocked ? 'var(--accent-amber)' : 'var(--text-dim)', padding: '2px 4px' }}
                                     title={isLocked ? 'Vaga travada (fixa durante a geração automática)' : 'Vaga livre (clique para travar)'}
                                   >
@@ -312,6 +313,7 @@ export const ScheduleMatrix = ({
                                   type="button"
                                   onClick={() => onToggleLockSlot && onToggleLockSlot(sunday.date, shift.id, role.id)}
                                   disabled={readOnly}
+                                  aria-label={isLocked ? `Destravar vaga de ${role.name} em ${sunday.formatted} no turno ${shift.name}` : `Travar vaga de ${role.name} em ${sunday.formatted} no turno ${shift.name}`}
                                   style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: isLocked ? 'var(--accent-amber)' : 'var(--text-dim)', padding: 0 }}
                                   title={isLocked ? 'Vaga travada (fixa durante a geração automática)' : 'Vaga livre (clique para travar)'}
                                 >
