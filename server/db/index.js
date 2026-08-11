@@ -101,6 +101,89 @@ function initSchema(db) {
       FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE,
       UNIQUE(schedule_id, version)
     );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      volunteer_id INTEGER UNIQUE,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('LEADER', 'VOLUNTEER')),
+      active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (volunteer_id) REFERENCES volunteers(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at DATETIME NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      revoked_at DATETIME,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS schedule_exchanges (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      schedule_id INTEGER NOT NULL,
+      assignment_id INTEGER NOT NULL,
+      requester_id INTEGER NOT NULL,
+      target_volunteer_id INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'ACCEPTED', 'REJECTED', 'CANCELLED', 'EXPIRED')),
+      reason TEXT,
+      rejection_reason TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      responded_at DATETIME,
+      completed_at DATETIME,
+      FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE,
+      FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE,
+      FOREIGN KEY (requester_id) REFERENCES volunteers(id) ON DELETE CASCADE,
+      FOREIGN KEY (target_volunteer_id) REFERENCES volunteers(id) ON DELETE CASCADE,
+      CHECK (requester_id != target_volunteer_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS schedule_change_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      schedule_id INTEGER NOT NULL,
+      from_version INTEGER NOT NULL,
+      to_version INTEGER NOT NULL,
+      exchange_id INTEGER,
+      assignment_id INTEGER NOT NULL,
+      previous_volunteer_id INTEGER NOT NULL,
+      new_volunteer_id INTEGER NOT NULL,
+      changed_by_user_id INTEGER NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE,
+      FOREIGN KEY (exchange_id) REFERENCES schedule_exchanges(id) ON DELETE SET NULL,
+      FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE,
+      FOREIGN KEY (previous_volunteer_id) REFERENCES volunteers(id),
+      FOREIGN KEY (new_volunteer_id) REFERENCES volunteers(id),
+      FOREIGN KEY (changed_by_user_id) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS notifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      exchange_id INTEGER,
+      message TEXT NOT NULL,
+      read_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (exchange_id) REFERENCES schedule_exchanges(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
+    CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
+    CREATE INDEX IF NOT EXISTS idx_exchanges_requester ON schedule_exchanges(requester_id);
+    CREATE INDEX IF NOT EXISTS idx_exchanges_target ON schedule_exchanges(target_volunteer_id);
+    CREATE INDEX IF NOT EXISTS idx_exchanges_status ON schedule_exchanges(status);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_exchange_assignment
+      ON schedule_exchanges(assignment_id) WHERE status = 'PENDING';
+    CREATE INDEX IF NOT EXISTS idx_change_events_schedule ON schedule_change_events(schedule_id);
+    CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, created_at);
   `);
 
   // Migration check: ensure is_trainee and allowed_shift columns exist on existing DB
@@ -129,7 +212,7 @@ function initSchema(db) {
       db.exec(`ALTER TABLE schedules ADD COLUMN published_version INTEGER NOT NULL DEFAULT 0`);
     }
   } catch (err) {
-    console.error('Migration error:', err);
+    throw new Error(`Database migration failed: ${err.message}`, { cause: err });
   }
 }
 

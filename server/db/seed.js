@@ -49,6 +49,8 @@ export default function seedDatabase() {
   console.log('🌱 Clearing old test volunteers and seeding REAL church volunteer responses...');
 
   // Reset existing tables
+  db.prepare(`DELETE FROM sessions`).run();
+  db.prepare(`DELETE FROM users`).run();
   db.prepare(`DELETE FROM assignments`).run();
   db.prepare(`DELETE FROM unavailabilities`).run();
   db.prepare(`DELETE FROM proficiencies`).run();

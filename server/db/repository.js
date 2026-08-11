@@ -246,6 +246,257 @@ export function deleteUnavailability(id) {
   return info.changes > 0;
 }
 
+export function getPublishedAssignmentsByVolunteerId(volunteerId, { year, month } = {}) {
+  const db = getDatabase();
+  const conditions = ['a.volunteer_id = ?', "s.status = 'PUBLISHED'"];
+  const params = [volunteerId];
+  if (year !== undefined) {
+    conditions.push('s.year = ?');
+    params.push(year);
+  }
+  if (month !== undefined) {
+    conditions.push('s.month = ?');
+    params.push(month);
+  }
+  return db.prepare(`
+    SELECT a.*, s.year, s.month, s.published_version, v.name as volunteer_name
+    FROM assignments a
+    JOIN schedules s ON s.id = a.schedule_id
+    JOIN volunteers v ON v.id = a.volunteer_id
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY a.date ASC, a.shift ASC, a.role ASC
+  `).all(...params);
+}
+
+// --- Schedule Exchange Repository ---
+
+function formatExchange(exchange) {
+  if (!exchange) return null;
+  return {
+    ...exchange,
+    requesterId: exchange.requester_id,
+    targetVolunteerId: exchange.target_volunteer_id,
+    scheduleId: exchange.schedule_id,
+    assignmentId: exchange.assignment_id,
+    requesterName: exchange.requester_name,
+    targetVolunteerName: exchange.target_volunteer_name,
+    previousVolunteerId: exchange.assignment_volunteer_id,
+    date: exchange.assignment_date,
+    shift: exchange.assignment_shift,
+    role: exchange.assignment_role,
+    isTrainee: Boolean(exchange.assignment_is_trainee)
+  };
+}
+
+const exchangeSelect = `
+  SELECT e.*, a.volunteer_id as assignment_volunteer_id, a.date as assignment_date,
+    a.shift as assignment_shift, a.role as assignment_role, a.is_trainee as assignment_is_trainee,
+    requester.name as requester_name, target.name as target_volunteer_name
+  FROM schedule_exchanges e
+  JOIN assignments a ON a.id = e.assignment_id
+  JOIN volunteers requester ON requester.id = e.requester_id
+  JOIN volunteers target ON target.id = e.target_volunteer_id
+`;
+
+function validateExchangeTarget(db, assignment, targetVolunteerId) {
+  const target = db.prepare(`
+    SELECT id, active, allowed_shift FROM volunteers WHERE id = ?
+  `).get(targetVolunteerId);
+  if (!target || !target.active) throw new Error('Target volunteer not found or inactive.');
+
+  const requiredLevel = assignment.is_trainee ? 1 : 2;
+  const proficiency = db.prepare(`
+    SELECT level FROM proficiencies WHERE volunteer_id = ? AND role = ?
+  `).get(targetVolunteerId, assignment.role);
+  if (!proficiency || (assignment.is_trainee
+    ? proficiency.level !== requiredLevel
+    : proficiency.level < requiredLevel)) {
+    throw new Error(assignment.is_trainee
+      ? 'Target volunteer must have N1 proficiency for a trainee assignment.'
+      : 'Target volunteer lacks the required proficiency.');
+  }
+
+  if (target.allowed_shift !== 'ALL' && target.allowed_shift !== assignment.shift) {
+    throw new Error('Target volunteer is not allowed to serve in this shift.');
+  }
+
+  const unavailable = db.prepare(`
+    SELECT 1 FROM unavailabilities
+    WHERE volunteer_id = ? AND date = ? AND (shift = 'ALL' OR shift = ?)
+  `).get(targetVolunteerId, assignment.date, assignment.shift);
+  if (unavailable) throw new Error('Target volunteer is unavailable for this assignment.');
+
+  const sameSunday = db.prepare(`
+    SELECT 1 FROM assignments
+    WHERE schedule_id = ? AND date = ? AND volunteer_id = ? AND id != ?
+  `).get(assignment.schedule_id, assignment.date, targetVolunteerId, assignment.id);
+  if (sameSunday) throw new Error('Target volunteer is already assigned on this Sunday.');
+}
+
+export function getExchangeById(id) {
+  return formatExchange(getDatabase().prepare(`${exchangeSelect} WHERE e.id = ?`).get(id));
+}
+
+export function getExchangesByVolunteerId(volunteerId) {
+  return getDatabase().prepare(`${exchangeSelect}
+    WHERE e.requester_id = ? OR e.target_volunteer_id = ?
+    ORDER BY e.created_at DESC
+  `).all(volunteerId, volunteerId).map(formatExchange);
+}
+
+export function getAllScheduleExchanges() {
+  return getDatabase().prepare(`${exchangeSelect} ORDER BY e.created_at DESC`).all().map(formatExchange);
+}
+
+export function createNotification({ userId, type, exchangeId = null, message }) {
+  const result = getDatabase().prepare(`
+    INSERT INTO notifications (user_id, type, exchange_id, message)
+    VALUES (?, ?, ?, ?)
+  `).run(userId, type, exchangeId, message);
+  return getNotificationById(result.lastInsertRowid);
+}
+
+export function getNotificationById(id) {
+  return getDatabase().prepare(`SELECT * FROM notifications WHERE id = ?`).get(id) || null;
+}
+
+export function getNotificationsByUserId(userId) {
+  return getDatabase().prepare(`
+    SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC, id DESC
+  `).all(userId);
+}
+
+export function markNotificationRead(id, userId) {
+  const result = getDatabase().prepare(`
+    UPDATE notifications SET read_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND user_id = ?
+  `).run(id, userId);
+  return result.changes ? getNotificationById(id) : null;
+}
+
+export function markAllNotificationsRead(userId) {
+  return getDatabase().prepare(`
+    UPDATE notifications SET read_at = CURRENT_TIMESTAMP
+    WHERE user_id = ? AND read_at IS NULL
+  `).run(userId).changes;
+}
+
+export function createScheduleExchange({ assignmentId, requesterId, targetVolunteerId, reason = null }) {
+  const db = getDatabase();
+  const assignment = db.prepare(`
+    SELECT a.*, s.status as schedule_status, s.id as schedule_id
+    FROM assignments a
+    JOIN schedules s ON s.id = a.schedule_id
+    WHERE a.id = ?
+  `).get(assignmentId);
+  if (!assignment) throw new Error('Assignment not found.');
+  if (assignment.schedule_status !== SCHEDULE_STATUS.PUBLISHED) throw new Error('Only published assignments can be exchanged.');
+  if (assignment.volunteer_id !== requesterId) throw new Error('Only the assigned volunteer can request this exchange.');
+  if (requesterId === targetVolunteerId) throw new Error('The target volunteer must be different.');
+
+  const targetAccount = db.prepare(`SELECT id FROM users WHERE volunteer_id = ? AND active = 1`).get(targetVolunteerId);
+  if (!targetAccount) throw new Error('Target volunteer does not have an active account.');
+  validateExchangeTarget(db, assignment, targetVolunteerId);
+
+  const pending = db.prepare(`
+    SELECT 1 FROM schedule_exchanges WHERE assignment_id = ? AND status = 'PENDING'
+  `).get(assignmentId);
+  if (pending) throw new Error('This assignment already has a pending exchange.');
+
+  const result = db.prepare(`
+    INSERT INTO schedule_exchanges (schedule_id, assignment_id, requester_id, target_volunteer_id, reason)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(assignment.schedule_id, assignmentId, requesterId, targetVolunteerId, reason);
+  const exchange = getExchangeById(result.lastInsertRowid);
+  return exchange;
+}
+
+export function rejectScheduleExchange(id, targetVolunteerId, rejectionReason = null) {
+  const db = getDatabase();
+  const result = db.prepare(`
+    UPDATE schedule_exchanges
+    SET status = 'REJECTED', rejection_reason = ?, responded_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND target_volunteer_id = ? AND status = 'PENDING'
+  `).run(rejectionReason, id, targetVolunteerId);
+  if (!result.changes) throw new Error('Exchange not found, already closed, or not addressed to you.');
+  return getExchangeById(id);
+}
+
+export function cancelScheduleExchange(id, requesterId) {
+  const db = getDatabase();
+  const result = db.prepare(`
+    UPDATE schedule_exchanges
+    SET status = 'CANCELLED', responded_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND requester_id = ? AND status = 'PENDING'
+  `).run(id, requesterId);
+  if (!result.changes) throw new Error('Exchange not found, already closed, or not owned by you.');
+  return getExchangeById(id);
+}
+
+export function acceptScheduleExchange(id, targetVolunteerId, changedByUserId) {
+  const db = getDatabase();
+  const transaction = db.transaction(() => {
+    const exchange = db.prepare(`
+      SELECT e.*, a.volunteer_id as current_volunteer_id, a.date, a.shift, a.role,
+        a.is_trainee, s.status as schedule_status, s.published_version
+      FROM schedule_exchanges e
+      JOIN assignments a ON a.id = e.assignment_id
+      JOIN schedules s ON s.id = e.schedule_id
+      WHERE e.id = ?
+    `).get(id);
+    if (!exchange || exchange.status !== 'PENDING' || exchange.target_volunteer_id !== targetVolunteerId) {
+      throw new Error('Exchange not found, already closed, or not addressed to you.');
+    }
+    if (exchange.schedule_status !== SCHEDULE_STATUS.PUBLISHED) throw new Error('The schedule is no longer published.');
+    if (exchange.current_volunteer_id !== exchange.requester_id) throw new Error('The assignment has changed since the request.');
+
+    validateExchangeTarget(db, {
+      id: exchange.assignment_id,
+      schedule_id: exchange.schedule_id,
+      date: exchange.date,
+      shift: exchange.shift,
+      role: exchange.role,
+      is_trainee: exchange.is_trainee
+    }, targetVolunteerId);
+
+    const nextVersion = Number(exchange.published_version) + 1;
+    db.prepare(`UPDATE assignments SET volunteer_id = ? WHERE id = ?`).run(targetVolunteerId, exchange.assignment_id);
+    const assignments = getAssignmentsByScheduleId(exchange.schedule_id);
+    const schedule = db.prepare(`SELECT warnings FROM schedules WHERE id = ?`).get(exchange.schedule_id);
+    db.prepare(`
+      INSERT INTO schedule_versions (schedule_id, version, assignments, warnings)
+      VALUES (?, ?, ?, ?)
+    `).run(exchange.schedule_id, nextVersion, JSON.stringify(assignments), schedule.warnings || '[]');
+    db.prepare(`
+      UPDATE schedules SET published_version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+    `).run(nextVersion, exchange.schedule_id);
+    db.prepare(`
+      INSERT INTO schedule_change_events
+        (schedule_id, from_version, to_version, exchange_id, assignment_id, previous_volunteer_id, new_volunteer_id, changed_by_user_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(exchange.schedule_id, exchange.published_version, nextVersion, id, exchange.assignment_id, exchange.requester_id, targetVolunteerId, changedByUserId);
+    db.prepare(`
+      UPDATE schedule_exchanges
+      SET status = 'ACCEPTED', responded_at = CURRENT_TIMESTAMP, completed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(id);
+
+    const requesterUser = db.prepare(`SELECT id FROM users WHERE volunteer_id = ? AND active = 1`).get(exchange.requester_id);
+    if (requesterUser) {
+      db.prepare(`
+        INSERT INTO notifications (user_id, type, exchange_id, message)
+        VALUES (?, 'EXCHANGE_ACCEPTED', ?, ?)
+      `).run(requesterUser.id, id, `Sua troca foi aceita e a escala foi atualizada para a versão ${nextVersion}.`);
+    }
+    db.prepare(`
+      INSERT INTO notifications (user_id, type, exchange_id, message)
+      SELECT id, 'EXCHANGE_UPDATED', ?, ? FROM users WHERE role = 'LEADER' AND active = 1
+    `).run(id, `Uma troca foi aceita e gerou a versão ${nextVersion} da escala.`);
+  });
+  transaction();
+  return getExchangeById(id);
+}
+
 // --- Schedule Repository ---
 
 function parseJsonArray(value) {
