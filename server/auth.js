@@ -45,7 +45,7 @@ async function resolveSupabaseUser(req) {
 
   // The local profile is the source of application roles and volunteer links.
   // Supabase user metadata is deliberately not used for authorization.
-  const user = getPublicUserByEmail(data.user.email);
+  const user = await getPublicUserByEmail(data.user.email);
   if (!user || !user.active) return { status: 'unlinked', supabaseUser: data.user };
   return { status: 'authenticated', user, token, supabaseUser: data.user };
 }
@@ -54,30 +54,31 @@ export async function resolveRequestAuth(req) {
   if (req.app.locals.supabaseAuthClient || isSupabaseAuthConfigured()) return resolveSupabaseUser(req);
 
   const token = parseCookies(req.headers.cookie).session;
-  const user = getUserBySessionToken(token, req.app.locals.now?.() || new Date());
+  const user = await getUserBySessionToken(token, req.app.locals.now?.() || new Date());
   if (!user) return { status: 'unauthenticated' };
   return { status: 'authenticated', user, token };
 }
 
-export function requireAuth(req, res, next) {
-  resolveRequestAuth(req)
-    .then(result => {
-      if (result.status === 'unlinked') {
-        return res.status(403).json({
-          error: 'Authenticated account is not linked to an application profile.',
-          code: 'AUTH_PROFILE_REQUIRED'
-        });
-      }
-      if (result.status !== 'authenticated') {
-        return res.status(401).json({ error: 'Authentication required.', code: 'AUTH_REQUIRED' });
-      }
-      req.user = result.user;
-      req.sessionToken = result.token;
-      req.authProvider = req.app.locals.supabaseAuthClient || isSupabaseAuthConfigured() ? 'supabase' : 'legacy';
-      req.supabaseUser = result.supabaseUser;
-      return next();
-    })
-    .catch(() => res.status(401).json({ error: 'Authentication required.', code: 'AUTH_REQUIRED' }));
+export async function requireAuth(req, res, next) {
+  try {
+    const result = await resolveRequestAuth(req);
+    if (result.status === 'unlinked') {
+      return res.status(403).json({
+        error: 'Authenticated account is not linked to an application profile.',
+        code: 'AUTH_PROFILE_REQUIRED'
+      });
+    }
+    if (result.status !== 'authenticated') {
+      return res.status(401).json({ error: 'Authentication required.', code: 'AUTH_REQUIRED' });
+    }
+    req.user = result.user;
+    req.sessionToken = result.token;
+    req.authProvider = req.app.locals.supabaseAuthClient || isSupabaseAuthConfigured() ? 'supabase' : 'legacy';
+    req.supabaseUser = result.supabaseUser;
+    return next();
+  } catch (error) {
+    return res.status(401).json({ error: 'Authentication required.', code: 'AUTH_REQUIRED' });
+  }
 }
 
 export function requireRole(...roles) {

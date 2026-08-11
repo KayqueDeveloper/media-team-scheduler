@@ -43,19 +43,22 @@ export const REAL_VOLUNTEER_SURVEY_DATA = [
   { name: 'Elen Santos', available: true, phone: '31 994241605', shifts: ['MORNING', 'NIGHT'], roles: ['FREEHAND'], notes: '' }
 ];
 
-export default function seedDatabase() {
+export default async function seedDatabase() {
   const db = getDatabase();
 
   console.log('🌱 Clearing old test volunteers and seeding REAL church volunteer responses...');
 
   // Reset existing tables
-  db.prepare(`DELETE FROM sessions`).run();
-  db.prepare(`DELETE FROM users`).run();
-  db.prepare(`DELETE FROM assignments`).run();
-  db.prepare(`DELETE FROM unavailabilities`).run();
-  db.prepare(`DELETE FROM proficiencies`).run();
-  db.prepare(`DELETE FROM schedules`).run();
-  db.prepare(`DELETE FROM volunteers`).run();
+  await db.ready;
+  await db.transaction(async tx => {
+    await tx.run(`DELETE FROM sessions`);
+    await tx.run(`DELETE FROM users`);
+    await tx.run(`DELETE FROM assignments`);
+    await tx.run(`DELETE FROM unavailabilities`);
+    await tx.run(`DELETE FROM proficiencies`);
+    await tx.run(`DELETE FROM schedules`);
+    await tx.run(`DELETE FROM volunteers`);
+  });
 
   let createdCount = 0;
   let profCount = 0;
@@ -63,8 +66,8 @@ export default function seedDatabase() {
 
   const septemberSundays = ['2026-09-06', '2026-09-13', '2026-09-20', '2026-09-27'];
 
-  REAL_VOLUNTEER_SURVEY_DATA.forEach(vData => {
-    const volunteer = repository.createVolunteer({
+  for (const vData of REAL_VOLUNTEER_SURVEY_DATA) {
+    const volunteer = await repository.createVolunteer({
       name: vData.name.trim(),
       email: `${vData.name.trim().toLowerCase().replace(/\s+/g, '.')}@igreja.org`,
       phone: vData.phone,
@@ -83,16 +86,16 @@ export default function seedDatabase() {
     if (vData.roles.includes('COORDINATOR')) {
       profsMap['COORDINATOR'] = 3;
     }
-    repository.setVolunteerProficiencies(volunteer.id, profsMap);
+    await repository.setVolunteerProficiencies(volunteer.id, profsMap);
     profCount += vData.roles.length;
 
     // Shift Availability -> Add unavailabilities if they cannot serve a shift
     const servesMorning = vData.shifts.includes('MORNING');
     const servesNight = vData.shifts.includes('NIGHT');
 
-    septemberSundays.forEach(dateStr => {
+    for (const dateStr of septemberSundays) {
       if (!servesMorning) {
-        repository.addUnavailability({
+        await repository.addUnavailability({
           volunteerId: volunteer.id,
           date: dateStr,
           shift: SHIFTS.MORNING,
@@ -101,7 +104,7 @@ export default function seedDatabase() {
         unavailCount++;
       }
       if (!servesNight) {
-        repository.addUnavailability({
+        await repository.addUnavailability({
           volunteerId: volunteer.id,
           date: dateStr,
           shift: SHIFTS.NIGHT,
@@ -109,21 +112,25 @@ export default function seedDatabase() {
         });
         unavailCount++;
       }
-    });
-  });
+    }
+  }
 
   console.log(`✅ Seeded ${createdCount} real volunteers from survey.`);
   console.log(`✅ Seeded ${profCount} proficiency entries across 6 roles.`);
   console.log(`✅ Seeded ${unavailCount} shift unavailability restrictions.`);
 
   // Create September 2026 Schedule Draft
-  const sepSchedule = repository.createSchedule({ year: 2026, month: 9, status: SCHEDULE_STATUS.DRAFT });
+  const sepSchedule = await repository.createSchedule({ year: 2026, month: 9, status: SCHEDULE_STATUS.DRAFT });
   console.log(`✅ Created September 2026 Schedule (ID: ${sepSchedule.id}).`);
 
   console.log('✨ Database seeding with REAL data completed successfully.');
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  seedDatabase();
-  closeDatabase();
+  seedDatabase()
+    .then(() => closeDatabase())
+    .catch(error => {
+      console.error(error);
+      process.exitCode = 1;
+    });
 }

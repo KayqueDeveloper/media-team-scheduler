@@ -78,6 +78,38 @@ CORS_ORIGIN=https://painel.exemplo.org npm run server
 
 O access token Supabase é enviado pelo frontend em uma requisição CORS; o servidor precisa responder com a origem permitida. O cookie legado continua disponível apenas quando Supabase Auth não está configurado.
 
+## Produção com Render e Supabase
+
+Em produção, o backend usa PostgreSQL quando `DATABASE_URL` está configurada. Sem essa variável, o ambiente local continua usando SQLite.
+
+No Render, configure:
+
+- Build Command: `npm ci && npm run build`
+- Start Command: `npm start`
+- `DATABASE_URL`: connection string do Supabase
+- `VITE_SUPABASE_URL`: URL pública do projeto Supabase, usada no build do frontend
+- `VITE_SUPABASE_PUBLISHABLE_KEY`: chave publishable, usada no build do frontend
+- `SUPABASE_URL`: URL do projeto para validação no backend
+- `SUPABASE_PUBLISHABLE_KEY`: chave publishable usada pelo cliente Supabase do backend
+- `SUPABASE_SECRET_KEY`: chave secret somente no backend; necessária para criar contas pela API
+- `NODE_ENV=production`
+- `AUTH_BOOTSTRAP_EMAIL`: e-mail inicial do líder
+- `AUTH_BOOTSTRAP_PASSWORD`: senha inicial com pelo menos 8 caracteres
+
+As variáveis `VITE_*` precisam estar configuradas antes do build do Render, pois o Vite as incorpora no bundle público. Nunca use `SUPABASE_SECRET_KEY` com o prefixo `VITE_`.
+
+O Express serve o build do React e a API no mesmo domínio. Por isso, no cenário recomendado, `CORS_ORIGIN` e `COOKIE_CROSS_SITE` não precisam ser configurados. O frontend continua usando `/api` como base.
+
+Para migrar o banco SQLite local para um projeto Supabase vazio, faça um backup antes e execute:
+
+```bash
+DATABASE_URL='postgresql://...' MIGRATION_REPLACE=true npm run migrate:postgres
+```
+
+O comando lê `server/db/database.sqlite` por padrão. Para indicar outro arquivo, use `SQLITE_PATH=/caminho/arquivo.sqlite`. `MIGRATION_REPLACE=true` apaga os dados das tabelas de destino antes da importação; use somente em um projeto novo ou após confirmar o backup.
+
+O schema do PostgreSQL é criado automaticamente na primeira inicialização da API. Não execute `npm run seed` contra o Supabase de produção: ele limpa e recria os dados.
+
 ## Verificação
 
 ```bash

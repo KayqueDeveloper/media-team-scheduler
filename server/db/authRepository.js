@@ -33,7 +33,7 @@ function publicUser(user) {
   };
 }
 
-export function createUser({ name, email, password, role = 'VOLUNTEER', volunteerId = null, active = 1, allowWeakPassword = false }) {
+export async function createUser({ name, email, password, role = 'VOLUNTEER', volunteerId = null, active = 1, allowWeakPassword = false }) {
   const minimumPasswordLength = allowWeakPassword ? 6 : 8;
   if (!name?.trim() || !email?.trim() || !password || password.length < minimumPasswordLength) {
     throw new Error(`Name, email and a password with at least ${minimumPasswordLength} characters are required.`);
@@ -43,103 +43,96 @@ export function createUser({ name, email, password, role = 'VOLUNTEER', voluntee
 
   const db = getDatabase();
   if (volunteerId) {
-    const volunteer = db.prepare(`SELECT id, active FROM volunteers WHERE id = ?`).get(volunteerId);
+    const volunteer = await db.one('SELECT id, active FROM volunteers WHERE id = ?', [volunteerId]);
     if (!volunteer) throw new Error('Volunteer not found.');
     if (!volunteer.active && active) throw new Error('Inactive volunteers cannot receive an active account.');
   }
-  const info = db.prepare(`
+  const result = await db.run(`
     INSERT INTO users (volunteer_id, name, email, password_hash, role, active)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run(volunteerId || null, name.trim(), email.trim().toLowerCase(), hashPassword(password), role, active ? 1 : 0);
-  return getUserById(info.lastInsertRowid);
+    RETURNING id
+  `, [volunteerId || null, name.trim(), email.trim().toLowerCase(), hashPassword(password), role, active ? 1 : 0]);
+  return getUserById(result.lastInsertRowid);
 }
 
-export function getUserById(id) {
-  return publicUser(getDatabase().prepare(`SELECT * FROM users WHERE id = ?`).get(id));
+export async function getUserById(id) {
+  return publicUser(await getDatabase().one('SELECT * FROM users WHERE id = ?', [id]));
 }
 
-export function deleteUserById(id) {
-  return getDatabase().prepare(`DELETE FROM users WHERE id = ?`).run(id).changes > 0;
+export async function deleteUserById(id) {
+  const result = await getDatabase().run('DELETE FROM users WHERE id = ?', [id]);
+  return result.changes > 0;
 }
 
-export function getUserIdByVolunteerId(volunteerId) {
-  return getDatabase().prepare(`SELECT id FROM users WHERE volunteer_id = ? AND active = 1`).get(volunteerId)?.id || null;
+export async function getUserIdByVolunteerId(volunteerId) {
+  return (await getDatabase().one('SELECT id FROM users WHERE volunteer_id = ? AND active = 1', [volunteerId]))?.id || null;
 }
 
-export function getLeaderUserIds() {
-  return getDatabase().prepare(`SELECT id FROM users WHERE role = 'LEADER' AND active = 1`).all().map(user => user.id);
+export async function getLeaderUserIds() {
+  const rows = await getDatabase().all("SELECT id FROM users WHERE role = 'LEADER' AND active = 1");
+  return rows.map(user => user.id);
 }
 
-export function getUserByEmail(email) {
-  return getDatabase().prepare(`SELECT * FROM users WHERE email = ? COLLATE NOCASE`).get(email?.trim()) || null;
+export async function getUserByEmail(email) {
+  return getDatabase().one('SELECT * FROM users WHERE LOWER(email) = LOWER(?)', [email?.trim()]);
 }
 
-export function getPublicUserByEmail(email) {
-  return publicUser(getUserByEmail(email));
+export async function getPublicUserByEmail(email) {
+  return publicUser(await getUserByEmail(email));
 }
 
-export function authenticateUser(email, password) {
-  const user = getUserByEmail(email);
+export async function authenticateUser(email, password) {
+  const user = await getUserByEmail(email);
   if (!user || !user.active || !verifyPassword(password, user.password_hash)) return null;
   return publicUser(user);
 }
 
-export function createSession(userId, now = new Date()) {
+export async function createSession(userId, now = new Date()) {
   const token = randomBytes(32).toString('base64url');
   const expiresAt = new Date(now.getTime() + SESSION_DURATION_MS).toISOString();
-  getDatabase().prepare(`
-    INSERT INTO sessions (user_id, token_hash, expires_at)
-    VALUES (?, ?, ?)
-  `).run(userId, hashToken(token), expiresAt);
+  await getDatabase().run(`
+    INSERT INTO sessions (user_id, token_hash, expires_at) VALUES (?, ?, ?)
+  `, [userId, hashToken(token), expiresAt]);
   return { token, expiresAt };
 }
 
-export function getUserBySessionToken(token, now = new Date()) {
+export async function getUserBySessionToken(token, now = new Date()) {
   if (!token) return null;
-  const row = getDatabase().prepare(`
+  const row = await getDatabase().one(`
     SELECT u.*
-    FROM sessions s
-    JOIN users u ON u.id = s.user_id
-    WHERE s.token_hash = ?
-      AND s.revoked_at IS NULL
-      AND s.expires_at > ?
-      AND u.active = 1
-  `).get(hashToken(token), now.toISOString());
+    FROM sessions s JOIN users u ON u.id = s.user_id
+    WHERE s.token_hash = ? AND s.revoked_at IS NULL AND s.expires_at > ? AND u.active = 1
+  `, [hashToken(token), now.toISOString()]);
   return publicUser(row);
 }
 
-export function revokeSession(token) {
+export async function revokeSession(token) {
   if (!token) return false;
-  const result = getDatabase().prepare(`
-    UPDATE sessions SET revoked_at = CURRENT_TIMESTAMP
-    WHERE token_hash = ? AND revoked_at IS NULL
-  `).run(hashToken(token));
+  const result = await getDatabase().run(`
+    UPDATE sessions SET revoked_at = CURRENT_TIMESTAMP WHERE token_hash = ? AND revoked_at IS NULL
+  `, [hashToken(token)]);
   return result.changes > 0;
 }
 
-export function cleanupExpiredSessions(now = new Date()) {
-  return getDatabase().prepare(`DELETE FROM sessions WHERE expires_at <= ? OR revoked_at IS NOT NULL`).run(now.toISOString()).changes;
+export async function cleanupExpiredSessions(now = new Date()) {
+  const result = await getDatabase().run('DELETE FROM sessions WHERE expires_at <= ? OR revoked_at IS NOT NULL', [now.toISOString()]);
+  return result.changes;
 }
 
-export function ensureBootstrapLeader({ email, password, name = 'Líder' } = {}) {
-  const db = getDatabase();
+export async function ensureBootstrapLeader({ email, password, name = 'Líder' } = {}) {
   if (!email || !password) return null;
-  const existing = db.prepare(`SELECT id, role FROM users WHERE email = ? COLLATE NOCASE`).get(email.trim());
-  if (existing) {
-    return null;
-  }
+  const existing = await getDatabase().one('SELECT id, role FROM users WHERE LOWER(email) = LOWER(?)', [email.trim()]);
+  if (existing) return null;
   return createUser({ name, email, password, role: 'LEADER' });
 }
 
-export function resetBootstrapLeader({ email, password, name = 'Líder', resetExisting = false } = {}) {
+export async function resetBootstrapLeader({ email, password, name = 'Líder', resetExisting = false } = {}) {
   if (!email || !password || !resetExisting) return ensureBootstrapLeader({ email, password, name });
   const db = getDatabase();
-  const existing = db.prepare(`SELECT id FROM users WHERE email = ? COLLATE NOCASE`).get(email.trim());
+  const existing = await db.one('SELECT id FROM users WHERE LOWER(email) = LOWER(?)', [email.trim()]);
   if (!existing) return createUser({ name, email, password, role: 'LEADER' });
-  db.prepare(`
-    UPDATE users
-    SET name = ?, password_hash = ?, role = 'LEADER', active = 1, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(name.trim(), hashPassword(password), existing.id);
+  await db.run(`
+    UPDATE users SET name = ?, password_hash = ?, role = 'LEADER', active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+  `, [name.trim(), hashPassword(password), existing.id]);
   return getUserById(existing.id);
 }

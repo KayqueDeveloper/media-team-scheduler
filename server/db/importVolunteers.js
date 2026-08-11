@@ -17,17 +17,17 @@ function parseInput(contents) {
   }
 }
 
-function uniqueEmail(db, email, name, index) {
+async function uniqueEmail(db, email, name, index) {
   if (!email) return null;
   const normalized = email.trim().toLowerCase();
-  const taken = db.prepare(`SELECT id FROM volunteers WHERE email = ? COLLATE NOCASE`).get(normalized);
+  const taken = await db.one(`SELECT id FROM volunteers WHERE LOWER(email) = LOWER(?)`, [normalized]);
   if (!taken) return normalized;
 
   const [local, domain] = normalized.split('@');
   const base = `${local}+import-${index}`;
   let candidate = `${base}@${domain || 'invalid.local'}`;
   let suffix = 2;
-  while (db.prepare(`SELECT id FROM volunteers WHERE email = ? COLLATE NOCASE`).get(candidate)) {
+  while (await db.one(`SELECT id FROM volunteers WHERE LOWER(email) = LOWER(?)`, [candidate])) {
     candidate = `${base}-${suffix}@${domain || 'invalid.local'}`;
     suffix += 1;
   }
@@ -35,35 +35,35 @@ function uniqueEmail(db, email, name, index) {
   return candidate;
 }
 
-function importVolunteers(records) {
+async function importVolunteers(records) {
   if (!Array.isArray(records) || records.length === 0) throw new Error('The import file does not contain a volunteer list.');
   const db = getDatabase();
   const imported = [];
 
   for (const [index, record] of records.entries()) {
     if (!record?.name?.trim()) throw new Error(`Record ${index + 1} has no name.`);
-    const existing = db.prepare(`
+    const existing = await db.one(`
       SELECT id, email, name, active FROM volunteers
       WHERE name = ? AND COALESCE(phone, '') = COALESCE(?, '')
       LIMIT 1
-    `).get(record.name.trim(), record.phone || null);
+    `, [record.name.trim(), record.phone || null]);
     let volunteer;
     if (existing) {
       volunteer = existing;
     } else {
-      volunteer = createVolunteer({
+      volunteer = await createVolunteer({
         name: record.name.trim(),
-        email: uniqueEmail(db, record.email, record.name.trim(), index + 1),
+        email: await uniqueEmail(db, record.email, record.name.trim(), index + 1),
         phone: record.phone || null,
         maxMonthlyFrequency: record.maxMonthlyFrequency ?? record.maxShiftsPerMonth ?? 2,
         allowedShift: record.allowedShift || 'ALL',
         active: record.active !== false
       });
-      replaceVolunteerProficiencies(volunteer.id, record.proficiencies || {});
+      await replaceVolunteerProficiencies(volunteer.id, record.proficiencies || {});
     }
 
-    if (createAccounts && !db.prepare(`SELECT id FROM users WHERE volunteer_id = ?`).get(volunteer.id)) {
-      createUser({
+    if (createAccounts && !await db.one(`SELECT id FROM users WHERE volunteer_id = ?`, [volunteer.id])) {
+      await createUser({
         name: record.name.trim(),
         email: volunteer.email,
         password: defaultPassword,
@@ -86,7 +86,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   } else {
     try {
       const records = parseInput(fs.readFileSync(inputPath, 'utf8'));
-      const result = importVolunteers(records);
+      const result = await importVolunteers(records);
       console.log(`✅ Voluntários processados: ${result.length}`);
       console.log(`✅ Criados: ${result.filter(item => item.action === 'created').length}`);
       console.log(`ℹ️ Já existentes: ${result.filter(item => item.action === 'existing').length}`);
@@ -94,7 +94,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       console.error(`❌ Importação interrompida: ${error.message}`);
       process.exitCode = 1;
     } finally {
-      closeDatabase();
+      await closeDatabase();
     }
   }
 }

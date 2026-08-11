@@ -66,7 +66,7 @@ async function createHttpFixture(options = {}) {
 
   async function cleanup() {
     await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
-    app.locals.closeDatabase();
+    await app.locals.closeDatabase();
     if (ownsDirectory) await rm(directory, { recursive: true, force: true });
   }
 
