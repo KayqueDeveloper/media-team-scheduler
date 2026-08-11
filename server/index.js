@@ -50,9 +50,15 @@ import {
   resetBootstrapLeader,
   getUserById,
   getUserIdByVolunteerId,
-  revokeSession
+  revokeSession,
+  deleteUserById
 } from './db/authRepository.js';
 import { clearSessionCookie, parseCookies, rateLimitLogin, requireAuth, requireRole, setSessionCookie } from './auth.js';
+import {
+  ensureSupabaseUser,
+  isSupabaseAdminConfigured,
+  isSupabaseAuthConfigured
+} from './supabase.js';
 
 const PORT = process.env.PORT || 3001;
 
@@ -112,6 +118,25 @@ function parseYearMonth(input = {}, { defaultYear = 2026, defaultMonth = 9 } = {
   if (!Number.isInteger(year) || year < 2000 || year > 2200) throw new Error('Invalid year.');
   if (!Number.isInteger(month) || month < 1 || month > 12) throw new Error('Invalid month.');
   return { year, month };
+}
+
+function getBootstrapAdminFromEnv() {
+  const email = process.env.AUTH_BOOTSTRAP_EMAIL?.trim() || '';
+  const password = process.env.AUTH_BOOTSTRAP_PASSWORD || '';
+  const name = process.env.AUTH_BOOTSTRAP_NAME || 'Líder';
+  if (!email && !password) return undefined;
+  if (!email || !password) {
+    throw new Error('AUTH_BOOTSTRAP_EMAIL and AUTH_BOOTSTRAP_PASSWORD must be provided together.');
+  }
+  if (password.length < 8) {
+    throw new Error('AUTH_BOOTSTRAP_PASSWORD must contain at least 8 characters.');
+  }
+  return {
+    email,
+    password,
+    name,
+    resetExisting: process.env.AUTH_BOOTSTRAP_RESET === 'true'
+  };
 }
 
 function normalizeAssignment(assignment) {
@@ -208,15 +233,25 @@ export function createApp({
   dbPath,
   now = () => new Date(),
   timeZone = 'America/Sao_Paulo',
-  bootstrapAdmin
+  bootstrapAdmin,
+  supabaseAuthClient = null
 } = {}) {
   const app = express();
   app.locals.db = getDatabase(dbPath);
   app.locals.closeDatabase = closeDatabase;
   app.locals.now = now;
+  app.locals.supabaseAuthClient = supabaseAuthClient;
 
   if (bootstrapAdmin) resetBootstrapLeader(bootstrapAdmin);
   cleanupExpiredSessions(now());
+
+  app.locals.supabaseBootstrapReady = Promise.resolve(null);
+  if (bootstrapAdmin && isSupabaseAuthConfigured() && isSupabaseAdminConfigured()) {
+    app.locals.supabaseBootstrapReady = ensureSupabaseUser(bootstrapAdmin).catch(error => {
+      console.warn(`Could not provision Supabase bootstrap user: ${error.message}`);
+      return null;
+    });
+  }
 
   const allowedCorsOrigins = (process.env.CORS_ORIGIN || 'http://localhost:3000')
     .split(',')
@@ -232,6 +267,12 @@ export function createApp({
   app.use(express.json({ limit: '100kb' }));
 
   app.post('/api/auth/login', rateLimitLogin, (req, res) => {
+    if (isSupabaseAuthConfigured()) {
+      return res.status(410).json({
+        error: 'Use Supabase Auth signInWithPassword from the client.',
+        code: 'SUPABASE_AUTH_ENABLED'
+      });
+    }
     try {
       const user = authenticateUser(req.body?.email, req.body?.password);
       if (!user) return res.status(401).json({ error: 'Invalid email or password.', code: 'INVALID_CREDENTIALS' });
@@ -419,9 +460,25 @@ export function createApp({
   app.use('/api/unavailabilities', requireAuth, requireRole('LEADER'));
   app.use('/api/schedule', requireAuth, requireRole('LEADER'));
 
-  app.post('/api/admin/users', requireAuth, requireRole('LEADER'), (req, res) => {
+  app.post('/api/admin/users', requireAuth, requireRole('LEADER'), async (req, res) => {
     try {
-      const user = createUser(req.body || {});
+      const input = req.body || {};
+      const user = createUser(input);
+      if (isSupabaseAuthConfigured()) {
+        if (!isSupabaseAdminConfigured()) {
+          deleteUserById(user.id);
+          return res.status(503).json({
+            error: 'Configure SUPABASE_SECRET_KEY before provisioning users from the API.',
+            code: 'SUPABASE_ADMIN_NOT_CONFIGURED'
+          });
+        }
+        try {
+          await ensureSupabaseUser(input);
+        } catch (error) {
+          deleteUserById(user.id);
+          throw error;
+        }
+      }
       res.status(201).json({ user });
     } catch (error) {
       res.status(400).json({ error: error.message });
@@ -803,12 +860,7 @@ export function createApp({
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const app = createApp({
-    bootstrapAdmin: {
-      email: process.env.AUTH_BOOTSTRAP_EMAIL,
-      password: process.env.AUTH_BOOTSTRAP_PASSWORD,
-      name: process.env.AUTH_BOOTSTRAP_NAME || 'Líder',
-      resetExisting: process.env.AUTH_BOOTSTRAP_RESET === 'true'
-    }
+    bootstrapAdmin: getBootstrapAdminFromEnv()
   });
   app.listen(PORT, () => {
     console.log(`Server listening on http://localhost:${PORT}`);

@@ -190,3 +190,49 @@ test('normaliza flags booleanas serializadas como strings', async () => {
   assert.equal(volunteers[0].active, false);
   assert.equal(schedule[0].isTrainee, false);
 });
+
+test('usa a sessão Supabase para autenticar o login e proteger as chamadas da API', async () => {
+  const authEvents = [];
+  const session = { access_token: 'supabase-access-token' };
+  const authClient = {
+    auth: {
+      async getSession() {
+        return { data: { session }, error: null };
+      },
+      async signInWithPassword(credentials) {
+        authEvents.push(['signInWithPassword', credentials]);
+        return { data: { session }, error: null };
+      },
+      onAuthStateChange(callback) {
+        authEvents.push(['onAuthStateChange', callback]);
+        return { data: { subscription: { unsubscribe() {} } } };
+      },
+      async signOut() {
+        authEvents.push(['signOut']);
+        return { error: null };
+      }
+    }
+  };
+  const calls = [];
+  const client = createApiClient({
+    authClient,
+    fetchImpl: async (url, init) => {
+      calls.push({ url, init });
+      return jsonResponse({ user: { id: 1, role: 'LEADER' } });
+    }
+  });
+
+  const user = await client.login('leader@example.com', 'password');
+  await client.getVolunteers();
+  await client.logout();
+  client.subscribeToAuthState(() => {});
+
+  assert.deepEqual(user, { id: 1, role: 'LEADER' });
+  assert.deepEqual(authEvents[0], ['signInWithPassword', {
+    email: 'leader@example.com',
+    password: 'password'
+  }]);
+  assert.ok(calls.every(call => call.init.headers.get('Authorization') === 'Bearer supabase-access-token'));
+  assert.ok(authEvents.some(([event]) => event === 'signOut'));
+  assert.ok(authEvents.some(([event]) => event === 'onAuthStateChange'));
+});

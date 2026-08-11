@@ -1,4 +1,5 @@
-import { getUserBySessionToken } from './db/authRepository.js';
+import { getPublicUserByEmail, getUserBySessionToken } from './db/authRepository.js';
+import { getSupabaseAuthClient, isSupabaseAuthConfigured } from './supabase.js';
 
 const loginAttempts = new Map();
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
@@ -28,13 +29,55 @@ export function parseCookies(header = '') {
     .map(([key, value]) => [key, decodeURIComponent(value)]));
 }
 
-export function requireAuth(req, res, next) {
+function getBearerToken(req) {
+  const header = String(req.headers.authorization || '');
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() || null;
+}
+
+async function resolveSupabaseUser(req) {
+  const token = getBearerToken(req);
+  if (!token) return { status: 'unauthenticated' };
+
+  const client = req.app.locals.supabaseAuthClient || getSupabaseAuthClient();
+  const { data, error } = await client.auth.getUser(token);
+  if (error || !data?.user) return { status: 'unauthenticated' };
+
+  // The local profile is the source of application roles and volunteer links.
+  // Supabase user metadata is deliberately not used for authorization.
+  const user = getPublicUserByEmail(data.user.email);
+  if (!user || !user.active) return { status: 'unlinked', supabaseUser: data.user };
+  return { status: 'authenticated', user, token, supabaseUser: data.user };
+}
+
+export async function resolveRequestAuth(req) {
+  if (req.app.locals.supabaseAuthClient || isSupabaseAuthConfigured()) return resolveSupabaseUser(req);
+
   const token = parseCookies(req.headers.cookie).session;
   const user = getUserBySessionToken(token, req.app.locals.now?.() || new Date());
-  if (!user) return res.status(401).json({ error: 'Authentication required.', code: 'AUTH_REQUIRED' });
-  req.user = user;
-  req.sessionToken = token;
-  return next();
+  if (!user) return { status: 'unauthenticated' };
+  return { status: 'authenticated', user, token };
+}
+
+export function requireAuth(req, res, next) {
+  resolveRequestAuth(req)
+    .then(result => {
+      if (result.status === 'unlinked') {
+        return res.status(403).json({
+          error: 'Authenticated account is not linked to an application profile.',
+          code: 'AUTH_PROFILE_REQUIRED'
+        });
+      }
+      if (result.status !== 'authenticated') {
+        return res.status(401).json({ error: 'Authentication required.', code: 'AUTH_REQUIRED' });
+      }
+      req.user = result.user;
+      req.sessionToken = result.token;
+      req.authProvider = req.app.locals.supabaseAuthClient || isSupabaseAuthConfigured() ? 'supabase' : 'legacy';
+      req.supabaseUser = result.supabaseUser;
+      return next();
+    })
+    .catch(() => res.status(401).json({ error: 'Authentication required.', code: 'AUTH_REQUIRED' }));
 }
 
 export function requireRole(...roles) {
