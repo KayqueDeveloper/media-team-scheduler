@@ -1,3 +1,5 @@
+import nodemailer from 'nodemailer';
+
 const SHIFT_LABELS = { MORNING: 'Manhã', NIGHT: 'Noite' };
 
 function escapeHtml(value) {
@@ -19,29 +21,7 @@ function emailLayout(title, content, actionLabel, actionUrl) {
   </body></html>`;
 }
 
-export function createResendEmailSender({
-  apiKey = process.env.RESEND_API_KEY,
-  from = process.env.EMAIL_FROM,
-  publicAppUrl = process.env.PUBLIC_APP_URL || 'http://localhost:3000',
-  fetchImpl = globalThis.fetch
-} = {}) {
-  if (!apiKey || !from) return null;
-
-  async function send(payload, idempotencyKey) {
-    const response = await fetchImpl('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${apiKey}`,
-        'content-type': 'application/json',
-        'idempotency-key': idempotencyKey
-      },
-      body: JSON.stringify({ from, ...payload })
-    });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.message || `Falha ao enviar e-mail (${response.status}).`);
-    return body;
-  }
-
+function createEmailSender({ send, publicAppUrl }) {
   return {
     async sendServiceConfirmation(message) {
       const shift = SHIFT_LABELS[message.shift] || message.shift;
@@ -72,4 +52,60 @@ export function createResendEmailSender({
       }, message.idempotencyKey);
     }
   };
+}
+
+export function createSmtpEmailSender({
+  host = process.env.SMTP_HOST || 'smtp.gmail.com',
+  port = Number(process.env.SMTP_PORT || 465),
+  user = process.env.SMTP_USER,
+  password = process.env.SMTP_PASS,
+  from = process.env.EMAIL_FROM || process.env.SMTP_USER,
+  publicAppUrl = process.env.PUBLIC_APP_URL || 'http://localhost:3000',
+  transport,
+  transportFactory = nodemailer.createTransport
+} = {}) {
+  if (!user || !password || !from) return null;
+  const mailTransport = transport || transportFactory({
+    host,
+    port,
+    secure: port === 465,
+    auth: { user, pass: password.replaceAll(' ', '') }
+  });
+  return createEmailSender({
+    publicAppUrl,
+    async send(payload) {
+      const delivery = await mailTransport.sendMail({ from, ...payload });
+      return { id: delivery.messageId || null };
+    }
+  });
+}
+
+export function createResendEmailSender({
+  apiKey = process.env.RESEND_API_KEY,
+  from = process.env.EMAIL_FROM,
+  publicAppUrl = process.env.PUBLIC_APP_URL || 'http://localhost:3000',
+  fetchImpl = globalThis.fetch
+} = {}) {
+  if (!apiKey || !from) return null;
+  return createEmailSender({
+    publicAppUrl,
+    async send(payload, idempotencyKey) {
+      const response = await fetchImpl('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          'content-type': 'application/json',
+          'idempotency-key': idempotencyKey
+        },
+        body: JSON.stringify({ from, ...payload })
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.message || `Falha ao enviar e-mail (${response.status}).`);
+      return body;
+    }
+  });
+}
+
+export function createConfiguredEmailSender(options = {}) {
+  return createSmtpEmailSender(options) || createResendEmailSender(options);
 }

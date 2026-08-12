@@ -1,12 +1,12 @@
 import { closeDatabase, getDatabase } from '../db/index.js';
-import { createResendEmailSender } from '../email.js';
+import { createConfiguredEmailSender } from '../email.js';
 import { createServiceConfirmationModule } from '../serviceConfirmations.js';
 
 async function main() {
   const db = getDatabase();
   await db.ready;
-  const emailSender = createResendEmailSender();
-  if (!emailSender) throw new Error('Configure RESEND_API_KEY e EMAIL_FROM antes de executar os lembretes.');
+  const emailSender = createConfiguredEmailSender();
+  if (!emailSender) throw new Error('Configure Gmail SMTP ou Resend antes de executar os lembretes.');
   const confirmations = createServiceConfirmationModule({
     db,
     emailSender,

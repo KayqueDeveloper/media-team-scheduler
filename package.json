@@ -8,7 +8,7 @@
     "server": "node --env-file-if-exists=.env server/index.js",
     "seed": "node server/db/seed.js",
     "import:volunteers": "node server/db/importVolunteers.js",
-    "test": "node --test --test-reporter=spec --test-concurrency=1 server/solver/scheduler.test.js server/api.test.js src/api/client.test.js",
+    "test": "node --test --test-reporter=spec --test-concurrency=1 server/solver/scheduler.test.js server/api.test.js server/email.test.js src/api/client.test.js",
     "test:solver": "node --test server/solver/scheduler.test.js",
     "test:api": "node --test --test-concurrency=1 server/api.test.js src/api/client.test.js",
     "test:db": "node server/db/test.js",
@@ -26,6 +26,7 @@
     "express": "^5.2.1",
     "html2pdf.js": "^0.14.0",
     "lucide-react": "^1.28.0",
+    "nodemailer": "^7.0.11",
     "pg": "^8.23.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"

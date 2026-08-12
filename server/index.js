@@ -72,7 +72,7 @@ import {
 } from './supabase.js';
 import { validatePublicRegistration } from './registration.js';
 import { createServiceConfirmationModule } from './serviceConfirmations.js';
-import { createResendEmailSender } from './email.js';
+import { createConfiguredEmailSender } from './email.js';
 
 const PORT = process.env.PORT || 3001;
 
@@ -260,7 +260,7 @@ export function createApp({
   app.locals.now = now;
   app.locals.supabaseAuthClient = supabaseAuthClient;
   app.locals.supabaseAdminClient = supabaseAdminClient;
-  const configuredEmailSender = emailSender || createResendEmailSender({ publicAppUrl });
+  const configuredEmailSender = emailSender || createConfiguredEmailSender({ publicAppUrl });
   app.locals.serviceConfirmations = createServiceConfirmationModule({
     db,
     now,
