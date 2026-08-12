@@ -278,7 +278,7 @@ async function validateExchangeTarget(db, assignment, targetVolunteerId, ignored
   if (sameSunday) throw new Error('Target volunteer is already assigned on this Sunday.');
 }
 
-export async function getExchangeCandidates(assignmentId) {
+export async function getExchangeCandidates(assignmentId, { currentDate } = {}) {
   const db = database();
   const source = await db.one(`
     SELECT a.*, s.status AS schedule_status
@@ -286,6 +286,7 @@ export async function getExchangeCandidates(assignmentId) {
     WHERE a.id = ?
   `, [assignmentId]);
   if (!source || source.schedule_status !== SCHEDULE_STATUS.PUBLISHED) return [];
+  if (currentDate && source.date < currentDate) return [];
   const sourceHasPendingExchange = await db.one(`
     SELECT 1 FROM schedule_exchanges
     WHERE status = 'PENDING' AND (assignment_id = ? OR target_assignment_id = ?)
@@ -298,13 +299,14 @@ export async function getExchangeCandidates(assignmentId) {
     JOIN users u ON u.volunteer_id = a.volunteer_id
       AND u.active = 1 AND u.approval_status = 'APPROVED'
     WHERE a.schedule_id = ? AND a.id != ? AND a.volunteer_id != ?
+      ${currentDate ? 'AND a.date >= ?' : ''}
       AND NOT EXISTS (
         SELECT 1 FROM schedule_exchanges e
         WHERE e.status = 'PENDING'
           AND (e.assignment_id = a.id OR e.target_assignment_id = a.id)
       )
     ORDER BY a.date, a.shift, a.role, a.is_trainee
-  `, [source.schedule_id, source.id, source.volunteer_id]);
+  `, [source.schedule_id, source.id, source.volunteer_id, ...(currentDate ? [currentDate] : [])]);
   const compatible = [];
   for (const candidate of candidates) {
     try {
@@ -375,7 +377,7 @@ export async function markAllNotificationsRead(userId) {
   return result.changes;
 }
 
-export async function createScheduleExchange({ assignmentId, requesterId, targetAssignmentId, reason, confirmationId = null }) {
+export async function createScheduleExchange({ assignmentId, requesterId, targetAssignmentId, reason, confirmationId = null, currentDate }) {
   const db = database();
   const normalizedReason = String(reason || '').trim();
   const assignment = await db.one(`
@@ -385,6 +387,7 @@ export async function createScheduleExchange({ assignmentId, requesterId, target
   if (!assignment) throw new Error('Assignment not found.');
   if (assignment.schedule_status !== SCHEDULE_STATUS.PUBLISHED) throw new Error('Only published assignments can be exchanged.');
   if (assignment.volunteer_id !== requesterId) throw new Error('Only the assigned volunteer can request this exchange.');
+  if (currentDate && assignment.date < currentDate) throw new Error('Past assignments cannot be exchanged.');
   if (!normalizedReason) {
     const error = new Error('Informe o motivo da solicitação de troca.');
     error.code = 'EXCHANGE_REASON_REQUIRED';
@@ -401,6 +404,7 @@ export async function createScheduleExchange({ assignmentId, requesterId, target
   `, [targetAssignmentId]);
   if (!targetAssignment || targetAssignment.schedule_status !== SCHEDULE_STATUS.PUBLISHED) throw new Error('Target assignment not found or unpublished.');
   if (targetAssignment.schedule_id !== assignment.schedule_id) throw new Error('Both assignments must belong to the same published schedule.');
+  if (currentDate && targetAssignment.date < currentDate) throw new Error('Past assignments cannot be exchanged.');
   const targetVolunteerId = targetAssignment.volunteer_id;
   if (requesterId === targetVolunteerId) throw new Error('The target volunteer must be different.');
   if (!await db.one("SELECT id FROM users WHERE volunteer_id = ? AND role = 'VOLUNTEER' AND approval_status = 'APPROVED' AND active = 1", [targetVolunteerId])) throw new Error('Target volunteer does not have an active approved account.');
@@ -480,7 +484,7 @@ export async function cancelScheduleExchange(id, requesterId) {
   return getExchangeById(id);
 }
 
-export async function acceptScheduleExchange(id, targetVolunteerId, changedByUserId) {
+export async function acceptScheduleExchange(id, targetVolunteerId, changedByUserId, { currentDate } = {}) {
   const db = database();
   await db.transaction(async tx => {
     const exchange = await tx.one(`
@@ -499,6 +503,7 @@ export async function acceptScheduleExchange(id, targetVolunteerId, changedByUse
     if (exchange.schedule_status !== SCHEDULE_STATUS.PUBLISHED) throw new Error('The schedule is no longer published.');
     if (exchange.current_volunteer_id !== exchange.requester_id) throw new Error('The assignment has changed since the request.');
     if (exchange.target_current_volunteer_id !== exchange.target_volunteer_id) throw new Error('The target assignment has changed since the request.');
+    if (currentDate && (exchange.date < currentDate || exchange.target_date < currentDate)) throw new Error('This exchange expired because one of its assignments has already passed.');
     const sourceAssignment = { ...exchange, id: exchange.assignment_id, schedule_id: exchange.schedule_id };
     const targetAssignment = {
       id: exchange.target_assignment_id,

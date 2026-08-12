@@ -340,7 +340,7 @@ export function createApp({
     res.json({
       confirmation,
       candidates: confirmation.status === 'AWAITING'
-        ? await getExchangeCandidates(confirmation.assignmentId)
+        ? await getExchangeCandidates(confirmation.assignmentId, { currentDate: getCalendarDate(now(), timeZone) })
         : []
     });
   });
@@ -368,7 +368,8 @@ export function createApp({
         requesterId: confirmation.volunteerId,
         targetAssignmentId,
         reason,
-        confirmationId: confirmation.id
+        confirmationId: confirmation.id,
+        currentDate: getCalendarDate(now(), timeZone)
       });
       const targetUserId = await getUserIdByVolunteerId(exchange.targetVolunteerId);
       if (targetUserId) await createNotification({
@@ -648,7 +649,13 @@ export function createApp({
       const assignmentId = Number(req.body?.assignmentId);
       const targetAssignmentId = Number(req.body?.targetAssignmentId);
       if (!Number.isInteger(assignmentId) || !Number.isInteger(targetAssignmentId)) return res.status(400).json({ error: 'assignmentId and targetAssignmentId are required.' });
-      const exchange = await createScheduleExchange({ assignmentId, requesterId: volunteerId, targetAssignmentId, reason: req.body.reason });
+      const exchange = await createScheduleExchange({
+        assignmentId,
+        requesterId: volunteerId,
+        targetAssignmentId,
+        reason: req.body.reason,
+        currentDate: getCalendarDate(now(), timeZone)
+      });
       const targetUserId = await getUserIdByVolunteerId(exchange.targetVolunteerId);
       if (targetUserId) await createNotification({
         userId: targetUserId,
@@ -669,14 +676,16 @@ export function createApp({
     if (!Number.isInteger(assignmentId)) return res.status(400).json({ error: 'assignmentId is required.' });
     const owned = (await getPublishedAssignmentsByVolunteerId(volunteerId)).some(item => item.id === assignmentId);
     if (!owned) return res.status(404).json({ error: 'Published assignment not found.' });
-    res.json({ candidates: await getExchangeCandidates(assignmentId) });
+    res.json({ candidates: await getExchangeCandidates(assignmentId, { currentDate: getCalendarDate(now(), timeZone) }) });
   });
 
   app.post('/api/exchanges/:id/accept', requireAuth, requireRole('VOLUNTEER'), async (req, res) => {
     try {
       const volunteerId = requireVolunteerIdentity(req, res);
       if (!volunteerId) return;
-      res.json({ exchange: await acceptScheduleExchange(Number(req.params.id), volunteerId, req.user.id) });
+      res.json({ exchange: await acceptScheduleExchange(Number(req.params.id), volunteerId, req.user.id, {
+        currentDate: getCalendarDate(now(), timeZone)
+      }) });
     } catch (error) {
       res.status(422).json({ error: error.message });
     }

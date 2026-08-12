@@ -471,6 +471,49 @@ test('a failed email remains eligible for retry on the same day', async t => {
   assert.equal(completed.body.sent, 0);
 });
 
+test('a pending exchange expires after either assignment date passes', async t => {
+  let currentTime = new Date('2026-08-13T12:00:00Z');
+  const deliveries = [];
+  const emailSender = {
+    async sendServiceConfirmation(message) {
+      deliveries.push(message);
+      return { id: `email-${deliveries.length}` };
+    },
+    async sendExchangeRequest() {
+      return { id: 'exchange-email' };
+    }
+  };
+  const { fixture, assignments } = await createPublishedConfirmationFixture({
+    now: () => currentTime,
+    emailSender
+  });
+  t.after(fixture.cleanup);
+
+  await fixture.request('POST', '/api/admin/service-confirmations/dispatch');
+  const morningDelivery = deliveries.find(item => item.shift === 'MORNING');
+  const token = new URL(morningDelivery.confirmationUrl).searchParams.get('token');
+  const morningAssignment = assignments.find(item => item.shift === 'MORNING');
+  const nightAssignment = assignments.find(item => item.shift === 'NIGHT');
+  const requested = await fixture.requestUnauthenticated('POST', `/api/service-confirmations/${token}/exchange`, {
+    targetAssignmentId: nightAssignment.id,
+    reason: 'Preciso trocar este turno.'
+  });
+  assert.equal(requested.status, 201);
+
+  currentTime = new Date('2026-08-17T12:00:00Z');
+  const expiredRun = await fixture.request('POST', '/api/admin/service-confirmations/dispatch');
+  assert.equal(expiredRun.status, 200);
+  assert.equal(expiredRun.body.sent, 0);
+  assert.equal((await fixture.requestUnauthenticated('GET', `/api/service-confirmations/${token}`)).status, 404);
+
+  await fixture.loginAs('night@test.local');
+  const acceptance = await fixture.request('POST', `/api/exchanges/${requested.body.exchange.id}/accept`);
+  assert.equal(acceptance.status, 422);
+  const exchanges = await fixture.request('GET', '/api/me/exchanges');
+  assert.equal(exchanges.body.exchanges[0].status, 'EXPIRED');
+  assert.equal(exchanges.body.exchanges[0].assignmentId, morningAssignment.id);
+});
+
 test('confirmation flow requires a reason and swaps two published assignments after acceptance', async t => {
   let currentTime = new Date('2026-08-13T12:00:00Z');
   const deliveries = [];

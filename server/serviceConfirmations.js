@@ -147,6 +147,32 @@ export function createServiceConfirmationModule({
     }
     const today = calendarDate(now(), timeZone);
     const throughDate = addCalendarDays(today, 3);
+    await db.transaction(async tx => {
+      const expired = await tx.all(`
+        SELECT e.id, e.confirmation_id, source.date AS source_date
+        FROM schedule_exchanges e
+        JOIN assignments source ON source.id = e.assignment_id
+        JOIN assignments destination ON destination.id = e.target_assignment_id
+        WHERE e.status = 'PENDING' AND (source.date < ? OR destination.date < ?)
+      `, [today, today]);
+      for (const exchange of expired) {
+        await tx.run(`
+          UPDATE schedule_exchanges
+          SET status = 'EXPIRED', responded_at = CURRENT_TIMESTAMP, completed_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND status = 'PENDING'
+        `, [exchange.id]);
+        if (exchange.confirmation_id) {
+          const nextStatus = exchange.source_date >= today ? 'AWAITING' : 'SUPERSEDED';
+          await tx.run(`
+            UPDATE service_confirmations
+            SET status = ?, responded_at = NULL,
+              superseded_at = CASE WHEN ? = 'SUPERSEDED' THEN CURRENT_TIMESTAMP ELSE NULL END,
+              updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND status = 'EXCHANGE_PENDING'
+          `, [nextStatus, nextStatus, exchange.confirmation_id]);
+        }
+      }
+    });
     await ensureDueConfirmations(today);
     const due = await db.all(`${confirmationSelect}
       WHERE c.status = 'AWAITING'
