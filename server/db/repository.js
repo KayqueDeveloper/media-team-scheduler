@@ -668,10 +668,25 @@ export async function publishSchedule(id, { warnings = [] } = {}) {
 }
 
 export async function reopenSchedule(id) {
-  const schedule = await getScheduleById(id);
-  if (!schedule) return null;
-  if (schedule.status !== SCHEDULE_STATUS.PUBLISHED) throw new Error('Only published schedules can be reopened.');
-  return updateScheduleStatus(id, SCHEDULE_STATUS.DRAFT);
+  const db = database();
+  const reopened = await db.transaction(async tx => {
+    const schedule = await tx.one('SELECT status FROM schedules WHERE id = ?', [id]);
+    if (!schedule) return null;
+    if (schedule.status !== SCHEDULE_STATUS.PUBLISHED) throw new Error('Only published schedules can be reopened.');
+    await tx.run(`
+      UPDATE service_confirmations
+      SET status = 'SUPERSEDED', superseded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+      WHERE schedule_id = ? AND status != 'SUPERSEDED'
+    `, [id]);
+    await tx.run(`
+      UPDATE schedule_exchanges
+      SET status = 'EXPIRED', responded_at = CURRENT_TIMESTAMP, completed_at = CURRENT_TIMESTAMP
+      WHERE schedule_id = ? AND status = 'PENDING'
+    `, [id]);
+    await tx.run('UPDATE schedules SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [SCHEDULE_STATUS.DRAFT, id]);
+    return true;
+  });
+  return reopened === null ? null : getScheduleById(id);
 }
 
 export async function getScheduleVersions(id) {

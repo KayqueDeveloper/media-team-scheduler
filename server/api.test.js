@@ -393,7 +393,7 @@ test('daily reminders cover both shifts, deduplicate each day and stop after con
       return { id: `email-${deliveries.length}` };
     }
   };
-  const { fixture } = await createPublishedConfirmationFixture({ now: () => currentTime, emailSender });
+  const { fixture, scheduleId } = await createPublishedConfirmationFixture({ now: () => currentTime, emailSender });
   t.after(fixture.cleanup);
 
   const firstRun = await fixture.request('POST', '/api/admin/service-confirmations/dispatch');
@@ -427,6 +427,13 @@ test('daily reminders cover both shifts, deduplicate each day and stop after con
   const administrative = await fixture.request('GET', '/api/admin/service-confirmations?year=2026&month=8');
   assert.equal(administrative.status, 200);
   assert.deepEqual(administrative.body.confirmations.map(item => item.status).sort(), ['AWAITING', 'CONFIRMED']);
+
+  const reopened = await fixture.request('POST', `/api/schedule/${scheduleId}/reopen`);
+  assert.equal(reopened.status, 200);
+  const staleLink = await fixture.requestUnauthenticated('GET', `/api/service-confirmations/${token}`);
+  assert.equal(staleLink.status, 404);
+  const superseded = await fixture.request('GET', '/api/admin/service-confirmations?year=2026&month=8');
+  assert.ok(superseded.body.confirmations.every(item => item.status === 'SUPERSEDED'));
 });
 
 test('a failed email remains eligible for retry on the same day', async t => {

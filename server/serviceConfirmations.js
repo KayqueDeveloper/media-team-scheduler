@@ -110,6 +110,31 @@ export function createServiceConfirmationModule({
           VALUES (?, ?, ?)
           ON CONFLICT(assignment_id, volunteer_id) DO UPDATE SET
             schedule_id = excluded.schedule_id,
+            status = CASE
+              WHEN service_confirmations.status = 'SUPERSEDED' THEN 'AWAITING'
+              ELSE service_confirmations.status
+            END,
+            last_reminder_on = CASE
+              WHEN service_confirmations.status = 'SUPERSEDED' THEN NULL
+              ELSE service_confirmations.last_reminder_on
+            END,
+            reminder_count = CASE
+              WHEN service_confirmations.status = 'SUPERSEDED' THEN 0
+              ELSE service_confirmations.reminder_count
+            END,
+            provider_message_id = CASE
+              WHEN service_confirmations.status = 'SUPERSEDED' THEN NULL
+              ELSE service_confirmations.provider_message_id
+            END,
+            last_error = CASE
+              WHEN service_confirmations.status = 'SUPERSEDED' THEN NULL
+              ELSE service_confirmations.last_error
+            END,
+            responded_at = CASE
+              WHEN service_confirmations.status = 'SUPERSEDED' THEN NULL
+              ELSE service_confirmations.responded_at
+            END,
+            superseded_at = NULL,
             updated_at = CURRENT_TIMESTAMP
         `, [assignment.schedule_id, assignment.id, assignment.volunteer_id]);
       });
@@ -177,11 +202,13 @@ export function createServiceConfirmationModule({
       FROM schedule_exchanges e
       JOIN assignments source ON source.id = e.assignment_id
       JOIN assignments destination ON destination.id = e.target_assignment_id
+      JOIN schedules exchange_schedule ON exchange_schedule.id = e.schedule_id
       JOIN volunteers requester ON requester.id = e.requester_id
       JOIN volunteers target ON target.id = e.target_volunteer_id
       LEFT JOIN users target_user ON target_user.volunteer_id = target.id
         AND target_user.active = 1 AND target_user.approval_status = 'APPROVED'
       WHERE e.status = 'PENDING'
+        AND exchange_schedule.status = 'PUBLISHED'
         AND source.date >= ?
         AND (e.last_reminder_on IS NULL OR e.last_reminder_on != ?)
       ORDER BY e.created_at, e.id
