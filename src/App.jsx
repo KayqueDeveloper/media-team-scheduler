@@ -14,6 +14,8 @@ import { PasswordRecoveryPage } from './components/PasswordRecoveryPage';
 import { PendingRegistrationManager } from './components/PendingRegistrationManager';
 import { RegistrationPage } from './components/RegistrationPage';
 import { ResetPasswordPage } from './components/ResetPasswordPage';
+import { ServiceConfirmationPage } from './components/ServiceConfirmationPage';
+import { AdminConfirmationManager } from './components/AdminConfirmationManager';
 import { getCurrentBusinessMonth, getSundaysForMonth, MONTH_NAMES, ROLES, SHIFTS } from './domain/catalog';
 import {
   collectScheduleWarnings,
@@ -62,6 +64,7 @@ export function App() {
   const [busyAction, setBusyAction] = useState('');
   const [reloadToken, setReloadToken] = useState(0);
   const [adminExchanges, setAdminExchanges] = useState([]);
+  const [serviceConfirmations, setServiceConfirmations] = useState([]);
   const [pendingRegistrations, setPendingRegistrations] = useState([]);
   const [authUser, setAuthUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -114,6 +117,9 @@ export function App() {
   const currentMonthLabel = `${MONTH_NAMES[monthIndex]} ${year}`;
   const isPublished = scheduleState.status === 'published';
   const isBusy = Boolean(busyAction);
+  const confirmationToken = authPath === '/confirmar-presenca'
+    ? new URLSearchParams(window.location.search).get('token') || ''
+    : '';
 
   useEffect(() => {
     if (!authUser || authUser.role !== 'LEADER') return undefined;
@@ -152,8 +158,13 @@ export function App() {
   useEffect(() => {
     if (!authUser || authUser.role !== 'LEADER') return undefined;
     let cancelled = false;
-    api.getAdminExchanges()
-      .then(items => { if (!cancelled) setAdminExchanges(items); })
+    Promise.all([api.getAdminExchanges(), api.getAdminServiceConfirmations(year, month)])
+      .then(([items, confirmations]) => {
+        if (!cancelled) {
+          setAdminExchanges(items);
+          setServiceConfirmations(confirmations);
+        }
+      })
       .catch(error => {
         if (!cancelled) {
           if (error.status === 401) {
@@ -161,13 +172,14 @@ export function App() {
             setAuthError('Sua sessão expirou. Entre novamente para continuar.');
           }
           setAdminExchanges([]);
+          setServiceConfirmations([]);
           if (error.status !== 401) {
             setNotification({ type: 'error', message: `Não foi possível carregar as trocas: ${error.message}` });
           }
         }
       });
     return () => { cancelled = true; };
-  }, [authUser, reloadToken]);
+  }, [authUser, year, month, reloadToken]);
 
   useEffect(() => {
     if (!authUser || authUser.role !== 'LEADER') return undefined;
@@ -209,6 +221,7 @@ export function App() {
     }
   }
 
+  if (authPath === '/confirmar-presenca') return <ServiceConfirmationPage token={confirmationToken} api={api} />;
   if (authLoading) return <div className="app-state"><LoaderCircle className="spin" size={30} /><p>Verificando acesso…</p></div>;
   if (!authUser && authPath === '/cadastro') return (
     <RegistrationPage
@@ -608,6 +621,10 @@ export function App() {
 
             {activeTab === 'exchanges' && (
               <AdminExchangeManager exchanges={adminExchanges} />
+            )}
+
+            {activeTab === 'confirmations' && (
+              <AdminConfirmationManager confirmations={serviceConfirmations} />
             )}
 
             {activeTab === 'registrations' && (

@@ -16,8 +16,8 @@ export function AdminExchangeManager({ exchanges = [] }) {
             const Icon = exchange.status === 'ACCEPTED' ? CheckCircle2 : exchange.status === 'REJECTED' || exchange.status === 'CANCELLED' ? XCircle : Clock3;
             return <div className="portal-list-row" key={exchange.id}>
               <div>
-                <strong>{exchange.date} · {exchange.shift} · {exchange.role}</strong>
-                <span>{exchange.requesterName} → {exchange.targetVolunteerName}</span>
+                <strong>{exchange.date} · {exchange.shift} ↔ {exchange.targetDate} · {exchange.targetShift}</strong>
+                <span>{exchange.requesterName} ↔ {exchange.targetVolunteerName}</span>
                 {exchange.reason && <small className="portal-muted">Motivo: {exchange.reason}</small>}
               </div>
               <span className={`portal-tag status-${exchange.status.toLowerCase()}`}><Icon size={14} /> {labels[exchange.status] || exchange.status}</span>

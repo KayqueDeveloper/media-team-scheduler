@@ -12,10 +12,12 @@
     "test:solver": "node --test server/solver/scheduler.test.js",
     "test:api": "node --test --test-concurrency=1 server/api.test.js src/api/client.test.js",
     "test:db": "node server/db/test.js",
+    "test:e2e": "playwright test",
     "build": "vite build",
     "preview": "vite preview",
     "start": "node server/index.js",
-    "migrate:postgres": "node server/db/migrateSqliteToPostgres.js"
+    "migrate:postgres": "node server/db/migrateSqliteToPostgres.js",
+    "reminders:send": "node --env-file-if-exists=.env server/jobs/sendServiceConfirmationReminders.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.110.8",
@@ -29,6 +31,7 @@
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
     "@vitejs/plugin-react": "^6.0.5",
     "vite": "^8.2.0"
   }

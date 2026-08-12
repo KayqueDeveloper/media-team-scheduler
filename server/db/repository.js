@@ -206,10 +206,13 @@ export async function getPublishedAssignmentsByVolunteerId(volunteerId, { year, 
   if (year !== undefined) { conditions.push('s.year = ?'); params.push(year); }
   if (month !== undefined) { conditions.push('s.month = ?'); params.push(month); }
   return database().all(`
-    SELECT a.*, s.year, s.month, s.published_version, v.name as volunteer_name
+    SELECT a.*, s.year, s.month, s.published_version, v.name as volunteer_name,
+      c.status AS confirmation_status
     FROM assignments a
     JOIN schedules s ON s.id = a.schedule_id
     JOIN volunteers v ON v.id = a.volunteer_id
+    LEFT JOIN service_confirmations c
+      ON c.assignment_id = a.id AND c.volunteer_id = a.volunteer_id AND c.status != 'SUPERSEDED'
     WHERE ${conditions.join(' AND ')}
     ORDER BY a.date ASC, a.shift ASC, a.role ASC
   `, params);
@@ -223,27 +226,34 @@ function formatExchange(exchange) {
     targetVolunteerId: exchange.target_volunteer_id,
     scheduleId: exchange.schedule_id,
     assignmentId: exchange.assignment_id,
+    targetAssignmentId: exchange.target_assignment_id,
     requesterName: exchange.requester_name,
     targetVolunteerName: exchange.target_volunteer_name,
     previousVolunteerId: exchange.assignment_volunteer_id,
     date: exchange.assignment_date,
     shift: exchange.assignment_shift,
     role: exchange.assignment_role,
-    isTrainee: Boolean(exchange.assignment_is_trainee)
+    isTrainee: Boolean(exchange.assignment_is_trainee),
+    targetDate: exchange.target_assignment_date,
+    targetShift: exchange.target_assignment_shift,
+    targetRole: exchange.target_assignment_role
   };
 }
 
 const exchangeSelect = `
   SELECT e.*, a.volunteer_id as assignment_volunteer_id, a.date as assignment_date,
     a.shift as assignment_shift, a.role as assignment_role, a.is_trainee as assignment_is_trainee,
+    target_assignment.date as target_assignment_date, target_assignment.shift as target_assignment_shift,
+    target_assignment.role as target_assignment_role,
     requester.name as requester_name, target.name as target_volunteer_name
   FROM schedule_exchanges e
   JOIN assignments a ON a.id = e.assignment_id
+  LEFT JOIN assignments target_assignment ON target_assignment.id = e.target_assignment_id
   JOIN volunteers requester ON requester.id = e.requester_id
   JOIN volunteers target ON target.id = e.target_volunteer_id
 `;
 
-async function validateExchangeTarget(db, assignment, targetVolunteerId) {
+async function validateExchangeTarget(db, assignment, targetVolunteerId, ignoredAssignmentIds = []) {
   const target = await db.one('SELECT id, active, allowed_shift FROM volunteers WHERE id = ?', [targetVolunteerId]);
   if (!target || !target.active) throw new Error('Target volunteer not found or inactive.');
 
@@ -259,10 +269,61 @@ async function validateExchangeTarget(db, assignment, targetVolunteerId) {
   `, [targetVolunteerId, assignment.date, assignment.shift]);
   if (unavailable) throw new Error('Target volunteer is unavailable for this assignment.');
 
+  const ignored = [assignment.id, ...ignoredAssignmentIds].filter(Boolean);
+  const exclusions = ignored.map(() => 'id != ?').join(' AND ');
   const sameSunday = await db.one(`
-    SELECT 1 FROM assignments WHERE schedule_id = ? AND date = ? AND volunteer_id = ? AND id != ?
-  `, [assignment.schedule_id, assignment.date, targetVolunteerId, assignment.id]);
+    SELECT 1 FROM assignments
+    WHERE schedule_id = ? AND date = ? AND volunteer_id = ? ${exclusions ? `AND ${exclusions}` : ''}
+  `, [assignment.schedule_id, assignment.date, targetVolunteerId, ...ignored]);
   if (sameSunday) throw new Error('Target volunteer is already assigned on this Sunday.');
+}
+
+export async function getExchangeCandidates(assignmentId) {
+  const db = database();
+  const source = await db.one(`
+    SELECT a.*, s.status AS schedule_status
+    FROM assignments a JOIN schedules s ON s.id = a.schedule_id
+    WHERE a.id = ?
+  `, [assignmentId]);
+  if (!source || source.schedule_status !== SCHEDULE_STATUS.PUBLISHED) return [];
+  const sourceHasPendingExchange = await db.one(`
+    SELECT 1 FROM schedule_exchanges
+    WHERE status = 'PENDING' AND (assignment_id = ? OR target_assignment_id = ?)
+  `, [source.id, source.id]);
+  if (sourceHasPendingExchange) return [];
+  const candidates = await db.all(`
+    SELECT a.*, v.name AS volunteer_name
+    FROM assignments a
+    JOIN volunteers v ON v.id = a.volunteer_id
+    JOIN users u ON u.volunteer_id = a.volunteer_id
+      AND u.active = 1 AND u.approval_status = 'APPROVED'
+    WHERE a.schedule_id = ? AND a.id != ? AND a.volunteer_id != ?
+      AND NOT EXISTS (
+        SELECT 1 FROM schedule_exchanges e
+        WHERE e.status = 'PENDING'
+          AND (e.assignment_id = a.id OR e.target_assignment_id = a.id)
+      )
+    ORDER BY a.date, a.shift, a.role, a.is_trainee
+  `, [source.schedule_id, source.id, source.volunteer_id]);
+  const compatible = [];
+  for (const candidate of candidates) {
+    try {
+      await validateExchangeTarget(db, source, candidate.volunteer_id, [candidate.id]);
+      await validateExchangeTarget(db, candidate, source.volunteer_id, [source.id]);
+      compatible.push({
+        assignmentId: candidate.id,
+        volunteerId: candidate.volunteer_id,
+        volunteerName: candidate.volunteer_name,
+        date: candidate.date,
+        shift: candidate.shift,
+        role: candidate.role,
+        isTrainee: Boolean(candidate.is_trainee)
+      });
+    } catch {
+      // Only candidates for which both sides can serve are presented.
+    }
+  }
+  return compatible;
 }
 
 export async function getExchangeById(id) {
@@ -314,8 +375,9 @@ export async function markAllNotificationsRead(userId) {
   return result.changes;
 }
 
-export async function createScheduleExchange({ assignmentId, requesterId, targetVolunteerId, reason = null }) {
+export async function createScheduleExchange({ assignmentId, requesterId, targetAssignmentId, reason, confirmationId = null }) {
   const db = database();
+  const normalizedReason = String(reason || '').trim();
   const assignment = await db.one(`
     SELECT a.*, s.status as schedule_status, s.id as schedule_id
     FROM assignments a JOIN schedules s ON s.id = a.schedule_id WHERE a.id = ?
@@ -323,36 +385,98 @@ export async function createScheduleExchange({ assignmentId, requesterId, target
   if (!assignment) throw new Error('Assignment not found.');
   if (assignment.schedule_status !== SCHEDULE_STATUS.PUBLISHED) throw new Error('Only published assignments can be exchanged.');
   if (assignment.volunteer_id !== requesterId) throw new Error('Only the assigned volunteer can request this exchange.');
+  if (!normalizedReason) {
+    const error = new Error('Informe o motivo da solicitação de troca.');
+    error.code = 'EXCHANGE_REASON_REQUIRED';
+    throw error;
+  }
+  if (normalizedReason.length > 500) {
+    const error = new Error('O motivo deve ter no máximo 500 caracteres.');
+    error.code = 'EXCHANGE_REASON_TOO_LONG';
+    throw error;
+  }
+  const targetAssignment = await db.one(`
+    SELECT a.*, s.status AS schedule_status
+    FROM assignments a JOIN schedules s ON s.id = a.schedule_id WHERE a.id = ?
+  `, [targetAssignmentId]);
+  if (!targetAssignment || targetAssignment.schedule_status !== SCHEDULE_STATUS.PUBLISHED) throw new Error('Target assignment not found or unpublished.');
+  if (targetAssignment.schedule_id !== assignment.schedule_id) throw new Error('Both assignments must belong to the same published schedule.');
+  const targetVolunteerId = targetAssignment.volunteer_id;
   if (requesterId === targetVolunteerId) throw new Error('The target volunteer must be different.');
-  if (!await db.one('SELECT id FROM users WHERE volunteer_id = ? AND active = 1', [targetVolunteerId])) throw new Error('Target volunteer does not have an active account.');
-  await validateExchangeTarget(db, assignment, targetVolunteerId);
-  if (await db.one("SELECT 1 FROM schedule_exchanges WHERE assignment_id = ? AND status = 'PENDING'", [assignmentId])) throw new Error('This assignment already has a pending exchange.');
+  if (!await db.one("SELECT id FROM users WHERE volunteer_id = ? AND role = 'VOLUNTEER' AND approval_status = 'APPROVED' AND active = 1", [targetVolunteerId])) throw new Error('Target volunteer does not have an active approved account.');
+  await validateExchangeTarget(db, assignment, targetVolunteerId, [targetAssignment.id]);
+  await validateExchangeTarget(db, targetAssignment, requesterId, [assignment.id]);
+  const pendingConflict = await db.one(`
+    SELECT 1 FROM schedule_exchanges
+    WHERE status = 'PENDING'
+      AND (assignment_id IN (?, ?) OR target_assignment_id IN (?, ?))
+  `, [assignmentId, targetAssignmentId, assignmentId, targetAssignmentId]);
+  if (pendingConflict) throw new Error('One of these assignments already has a pending exchange.');
 
-  const result = await db.run(`
-    INSERT INTO schedule_exchanges (schedule_id, assignment_id, requester_id, target_volunteer_id, reason)
-    VALUES (?, ?, ?, ?, ?)
-    RETURNING id
-  `, [assignment.schedule_id, assignmentId, requesterId, targetVolunteerId, reason]);
-  return getExchangeById(result.lastInsertRowid);
+  const exchangeId = await db.transaction(async tx => {
+    let linkedConfirmationId = confirmationId;
+    if (!linkedConfirmationId) {
+      await tx.run(`
+        INSERT INTO service_confirmations (schedule_id, assignment_id, volunteer_id)
+        VALUES (?, ?, ?)
+        ON CONFLICT(assignment_id, volunteer_id) DO NOTHING
+      `, [assignment.schedule_id, assignmentId, requesterId]);
+      linkedConfirmationId = (await tx.one(`
+        SELECT id FROM service_confirmations WHERE assignment_id = ? AND volunteer_id = ?
+      `, [assignmentId, requesterId]))?.id;
+    }
+    const result = await tx.run(`
+      INSERT INTO schedule_exchanges
+        (schedule_id, assignment_id, target_assignment_id, requester_id, target_volunteer_id, reason, confirmation_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      RETURNING id
+    `, [assignment.schedule_id, assignmentId, targetAssignmentId, requesterId, targetVolunteerId, normalizedReason, linkedConfirmationId]);
+    if (linkedConfirmationId) {
+      const eligibleConfirmationStatuses = confirmationId
+        ? "status = 'AWAITING'"
+        : "status IN ('AWAITING', 'CONFIRMED')";
+      const updated = await tx.run(`
+        UPDATE service_confirmations
+        SET status = 'EXCHANGE_PENDING', responded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND assignment_id = ? AND volunteer_id = ? AND ${eligibleConfirmationStatuses}
+      `, [linkedConfirmationId, assignmentId, requesterId]);
+      if (!updated.changes) throw new Error('Confirmation is no longer eligible for an exchange request.');
+    }
+    return result.lastInsertRowid;
+  });
+  return getExchangeById(exchangeId);
 }
 
 export async function rejectScheduleExchange(id, targetVolunteerId, rejectionReason = null) {
-  const result = await database().run(`
-    UPDATE schedule_exchanges
-    SET status = 'REJECTED', rejection_reason = ?, responded_at = CURRENT_TIMESTAMP
-    WHERE id = ? AND target_volunteer_id = ? AND status = 'PENDING'
-  `, [rejectionReason, id, targetVolunteerId]);
-  if (!result.changes) throw new Error('Exchange not found, already closed, or not addressed to you.');
+  const db = database();
+  const changed = await db.transaction(async tx => {
+    const exchange = await tx.one('SELECT confirmation_id FROM schedule_exchanges WHERE id = ? AND target_volunteer_id = ? AND status = \'PENDING\'', [id, targetVolunteerId]);
+    if (!exchange) return false;
+    await tx.run(`UPDATE schedule_exchanges
+      SET status = 'REJECTED', rejection_reason = ?, responded_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [rejectionReason, id]);
+    if (exchange.confirmation_id) await tx.run(`UPDATE service_confirmations
+      SET status = 'AWAITING', responded_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+    `, [exchange.confirmation_id]);
+    return true;
+  });
+  if (!changed) throw new Error('Exchange not found, already closed, or not addressed to you.');
   return getExchangeById(id);
 }
 
 export async function cancelScheduleExchange(id, requesterId) {
-  const result = await database().run(`
-    UPDATE schedule_exchanges
-    SET status = 'CANCELLED', responded_at = CURRENT_TIMESTAMP
-    WHERE id = ? AND requester_id = ? AND status = 'PENDING'
-  `, [id, requesterId]);
-  if (!result.changes) throw new Error('Exchange not found, already closed, or not owned by you.');
+  const db = database();
+  const changed = await db.transaction(async tx => {
+    const exchange = await tx.one('SELECT confirmation_id FROM schedule_exchanges WHERE id = ? AND requester_id = ? AND status = \'PENDING\'', [id, requesterId]);
+    if (!exchange) return false;
+    await tx.run("UPDATE schedule_exchanges SET status = 'CANCELLED', responded_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+    if (exchange.confirmation_id) await tx.run(`UPDATE service_confirmations
+      SET status = 'AWAITING', responded_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+    `, [exchange.confirmation_id]);
+    return true;
+  });
+  if (!changed) throw new Error('Exchange not found, already closed, or not owned by you.');
   return getExchangeById(id);
 }
 
@@ -361,19 +485,35 @@ export async function acceptScheduleExchange(id, targetVolunteerId, changedByUse
   await db.transaction(async tx => {
     const exchange = await tx.one(`
       SELECT e.*, a.volunteer_id as current_volunteer_id, a.date, a.shift, a.role,
-        a.is_trainee, s.status as schedule_status, s.published_version
+        a.is_trainee, target_assignment.volunteer_id AS target_current_volunteer_id,
+        target_assignment.date AS target_date, target_assignment.shift AS target_shift,
+        target_assignment.role AS target_role, target_assignment.is_trainee AS target_is_trainee,
+        s.status as schedule_status, s.published_version
       FROM schedule_exchanges e
       JOIN assignments a ON a.id = e.assignment_id
+      JOIN assignments target_assignment ON target_assignment.id = e.target_assignment_id
       JOIN schedules s ON s.id = e.schedule_id
       WHERE e.id = ?
     `, [id]);
     if (!exchange || exchange.status !== 'PENDING' || exchange.target_volunteer_id !== targetVolunteerId) throw new Error('Exchange not found, already closed, or not addressed to you.');
     if (exchange.schedule_status !== SCHEDULE_STATUS.PUBLISHED) throw new Error('The schedule is no longer published.');
     if (exchange.current_volunteer_id !== exchange.requester_id) throw new Error('The assignment has changed since the request.');
-    await validateExchangeTarget(tx, { ...exchange, id: exchange.assignment_id, schedule_id: exchange.schedule_id }, targetVolunteerId);
+    if (exchange.target_current_volunteer_id !== exchange.target_volunteer_id) throw new Error('The target assignment has changed since the request.');
+    const sourceAssignment = { ...exchange, id: exchange.assignment_id, schedule_id: exchange.schedule_id };
+    const targetAssignment = {
+      id: exchange.target_assignment_id,
+      schedule_id: exchange.schedule_id,
+      date: exchange.target_date,
+      shift: exchange.target_shift,
+      role: exchange.target_role,
+      is_trainee: exchange.target_is_trainee
+    };
+    await validateExchangeTarget(tx, sourceAssignment, targetVolunteerId, [targetAssignment.id]);
+    await validateExchangeTarget(tx, targetAssignment, exchange.requester_id, [sourceAssignment.id]);
 
     const nextVersion = Number(exchange.published_version) + 1;
     await tx.run('UPDATE assignments SET volunteer_id = ? WHERE id = ?', [targetVolunteerId, exchange.assignment_id]);
+    await tx.run('UPDATE assignments SET volunteer_id = ? WHERE id = ?', [exchange.requester_id, exchange.target_assignment_id]);
     const assignments = await getAssignmentsByScheduleId(exchange.schedule_id, tx);
     const schedule = await tx.one('SELECT warnings FROM schedules WHERE id = ?', [exchange.schedule_id]);
     await tx.run(`
@@ -387,10 +527,34 @@ export async function acceptScheduleExchange(id, targetVolunteerId, changedByUse
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `, [exchange.schedule_id, exchange.published_version, nextVersion, id, exchange.assignment_id, exchange.requester_id, targetVolunteerId, changedByUserId]);
     await tx.run(`
+      INSERT INTO schedule_change_events
+        (schedule_id, from_version, to_version, exchange_id, assignment_id, previous_volunteer_id, new_volunteer_id, changed_by_user_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [exchange.schedule_id, exchange.published_version, nextVersion, id, exchange.target_assignment_id, targetVolunteerId, exchange.requester_id, changedByUserId]);
+    await tx.run(`
       UPDATE schedule_exchanges
       SET status = 'ACCEPTED', responded_at = CURRENT_TIMESTAMP, completed_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `, [id]);
+
+    await tx.run(`
+      UPDATE service_confirmations
+      SET status = 'SUPERSEDED', superseded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+      WHERE (assignment_id = ? AND volunteer_id = ?) OR (assignment_id = ? AND volunteer_id = ?)
+    `, [exchange.assignment_id, exchange.requester_id, exchange.target_assignment_id, targetVolunteerId]);
+    for (const confirmation of [
+      { assignmentId: exchange.assignment_id, volunteerId: targetVolunteerId },
+      { assignmentId: exchange.target_assignment_id, volunteerId: exchange.requester_id }
+    ]) {
+      await tx.run(`
+        INSERT INTO service_confirmations
+          (schedule_id, assignment_id, volunteer_id, status, responded_at)
+        VALUES (?, ?, ?, 'CONFIRMED', CURRENT_TIMESTAMP)
+        ON CONFLICT(assignment_id, volunteer_id) DO UPDATE SET
+          status = 'CONFIRMED', responded_at = CURRENT_TIMESTAMP,
+          superseded_at = NULL, updated_at = CURRENT_TIMESTAMP
+      `, [exchange.schedule_id, confirmation.assignmentId, confirmation.volunteerId]);
+    }
 
     const requesterUser = await tx.one('SELECT id FROM users WHERE volunteer_id = ? AND active = 1', [exchange.requester_id]);
     if (requesterUser) {

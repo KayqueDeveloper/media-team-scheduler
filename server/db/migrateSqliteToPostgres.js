@@ -15,7 +15,8 @@ const TABLES = [
   { name: 'assignments', columns: ['id', 'schedule_id', 'volunteer_id', 'date', 'shift', 'role', 'is_trainee', 'created_at'] },
   { name: 'schedule_versions', columns: ['id', 'schedule_id', 'version', 'assignments', 'warnings', 'published_at'] },
   { name: 'users', columns: ['id', 'volunteer_id', 'name', 'email', 'role', 'active', 'created_at', 'updated_at'] },
-  { name: 'schedule_exchanges', columns: ['id', 'schedule_id', 'assignment_id', 'requester_id', 'target_volunteer_id', 'status', 'reason', 'rejection_reason', 'created_at', 'responded_at', 'completed_at'] },
+  { name: 'service_confirmations', columns: ['id', 'schedule_id', 'assignment_id', 'volunteer_id', 'status', 'last_reminder_on', 'reminder_count', 'provider_message_id', 'last_error', 'responded_at', 'superseded_at', 'created_at', 'updated_at'] },
+  { name: 'schedule_exchanges', columns: ['id', 'schedule_id', 'assignment_id', 'target_assignment_id', 'requester_id', 'target_volunteer_id', 'status', 'reason', 'rejection_reason', 'confirmation_id', 'last_reminder_on', 'created_at', 'responded_at', 'completed_at'] },
   { name: 'schedule_change_events', columns: ['id', 'schedule_id', 'from_version', 'to_version', 'exchange_id', 'assignment_id', 'previous_volunteer_id', 'new_volunteer_id', 'changed_by_user_id', 'created_at'] },
   { name: 'notifications', columns: ['id', 'user_id', 'type', 'exchange_id', 'message', 'read_at', 'created_at'] }
 ];

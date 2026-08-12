@@ -120,6 +120,50 @@ async function createHttpFixture(options = {}) {
   return { request, requestUnauthenticated, loginAs, confirmEmail, hasAuthUser, cleanup };
 }
 
+async function createPublishedConfirmationFixture({ now, emailSender }) {
+  const fixture = await createHttpFixture({
+    now,
+    emailSender,
+    publicAppUrl: 'https://escala.test',
+    confirmationTokenSecret: 'test-confirmation-token-secret'
+  });
+  const morning = await fixture.request('POST', '/api/volunteers', {
+    name: 'Voluntária da manhã',
+    email: 'morning@test.local',
+    proficiencies: { VMIX: 2 }
+  });
+  const night = await fixture.request('POST', '/api/volunteers', {
+    name: 'Voluntário da noite',
+    email: 'night@test.local',
+    proficiencies: { VMIX: 2 }
+  });
+  for (const volunteer of [morning.body, night.body]) {
+    await fixture.request('POST', '/api/admin/users', {
+      name: volunteer.name,
+      email: volunteer.email,
+      password: 'volunteer-password',
+      role: 'VOLUNTEER',
+      volunteerId: volunteer.id
+    });
+  }
+
+  const generated = await fixture.request('POST', '/api/schedule/generate', { year: 2026, month: 8 });
+  const scheduleId = generated.body.schedule.id;
+  const saved = await fixture.request('PUT', `/api/schedule/${scheduleId}`, {
+    assignments: [
+      { date: '2026-08-16', shift: 'MORNING', role: 'VMIX', volunteerId: morning.body.id },
+      { date: '2026-08-16', shift: 'NIGHT', role: 'VMIX', volunteerId: night.body.id }
+    ],
+    lockedSlots: []
+  });
+  assert.equal(saved.status, 200);
+  const published = await fixture.request('POST', `/api/schedule/${scheduleId}/publish`, {
+    confirmedWarnings: true
+  });
+  assert.equal(published.status, 200);
+  return { fixture, scheduleId, morning: morning.body, night: night.body, assignments: published.body.assignments };
+}
+
 test('HTTP API enforces authentication and leader authorization', async t => {
   const fixture = await createHttpFixture();
   t.after(fixture.cleanup);
@@ -270,7 +314,10 @@ test('volunteer API isolates personal data and applies an accepted exchange as a
   assert.equal(generated.status, 200);
   const scheduleId = generated.body.schedule.id;
   const saved = await fixture.request('PUT', `/api/schedule/${scheduleId}`, {
-    assignments: [{ date: '2026-07-05', shift: 'MORNING', role: 'VMIX', volunteerId: requester.body.id }],
+    assignments: [
+      { date: '2026-07-05', shift: 'MORNING', role: 'VMIX', volunteerId: requester.body.id },
+      { date: '2026-07-19', shift: 'NIGHT', role: 'VMIX', volunteerId: target.body.id }
+    ],
     lockedSlots: []
   });
   assert.equal(saved.status, 200);
@@ -279,6 +326,7 @@ test('volunteer API isolates personal data and applies an accepted exchange as a
   });
   assert.equal(published.status, 200);
   const assignmentId = published.body.assignments.find(item => item.volunteer_id === requester.body.id && item.role === 'VMIX').id;
+  const targetAssignmentId = published.body.assignments.find(item => item.volunteer_id === target.body.id && item.role === 'VMIX').id;
 
   await fixture.loginAs('requester@test.local');
   const personalSchedule = await fixture.request('GET', '/api/me/schedule?year=2026&month=7');
@@ -295,7 +343,7 @@ test('volunteer API isolates personal data and applies an accepted exchange as a
 
   const exchange = await fixture.request('POST', '/api/exchanges', {
     assignmentId,
-    targetVolunteerId: target.body.id,
+    targetAssignmentId,
     reason: 'Imprevisto'
   });
   assert.equal(exchange.status, 201);
@@ -315,6 +363,7 @@ test('volunteer API isolates personal data and applies an accepted exchange as a
   const targetSchedule = await fixture.request('GET', '/api/me/schedule?year=2026&month=7');
   assert.equal(targetSchedule.body.assignments.length, 1);
   assert.equal(targetSchedule.body.assignments[0].volunteer_id, target.body.id);
+  assert.equal(targetSchedule.body.assignments[0].id, assignmentId);
 
   await fixture.loginAs('leader@test.local');
   const adminExchanges = await fixture.request('GET', '/api/admin/exchanges');
@@ -323,12 +372,219 @@ test('volunteer API isolates personal data and applies an accepted exchange as a
   const versions = await fixture.request('GET', `/api/schedule/${scheduleId}/versions`);
   assert.equal(versions.status, 200);
   assert.equal(versions.body.length, 2);
-  assert.equal(versions.body[0].assignments[0].volunteer_id, requester.body.id);
-  assert.equal(versions.body[1].assignments[0].volunteer_id, target.body.id);
+  assert.equal(versions.body[0].assignments.find(item => item.id === assignmentId).volunteer_id, requester.body.id);
+  assert.equal(versions.body[1].assignments.find(item => item.id === assignmentId).volunteer_id, target.body.id);
 
   await fixture.loginAs('requester@test.local');
   const requesterNotifications = await fixture.request('GET', '/api/me/notifications');
   assert.equal(requesterNotifications.body.notifications[0].type, 'EXCHANGE_ACCEPTED');
+});
+
+test('daily reminders cover both shifts, deduplicate each day and stop after confirmation', async t => {
+  let currentTime = new Date('2026-08-13T12:00:00Z');
+  const deliveries = [];
+  const emailSender = {
+    async sendServiceConfirmation(message) {
+      deliveries.push(message);
+      return { id: `email-${deliveries.length}` };
+    },
+    async sendExchangeRequest(message) {
+      deliveries.push(message);
+      return { id: `email-${deliveries.length}` };
+    }
+  };
+  const { fixture } = await createPublishedConfirmationFixture({ now: () => currentTime, emailSender });
+  t.after(fixture.cleanup);
+
+  const firstRun = await fixture.request('POST', '/api/admin/service-confirmations/dispatch');
+  assert.equal(firstRun.status, 200);
+  assert.equal(firstRun.body.sent, 2);
+  assert.deepEqual(deliveries.map(item => item.shift).sort(), ['MORNING', 'NIGHT']);
+
+  const duplicateRun = await fixture.request('POST', '/api/admin/service-confirmations/dispatch');
+  assert.equal(duplicateRun.status, 200);
+  assert.equal(duplicateRun.body.sent, 0);
+  assert.equal(deliveries.length, 2);
+
+  const confirmationUrl = new URL(deliveries.find(item => item.shift === 'MORNING').confirmationUrl);
+  const token = confirmationUrl.searchParams.get('token');
+  const details = await fixture.requestUnauthenticated('GET', `/api/service-confirmations/${token}`);
+  assert.equal(details.status, 200);
+  assert.equal(details.body.confirmation.shift, 'MORNING');
+  assert.equal(details.body.confirmation.status, 'AWAITING');
+
+  const confirmed = await fixture.requestUnauthenticated('POST', `/api/service-confirmations/${token}/confirm`);
+  assert.equal(confirmed.status, 200);
+  assert.equal(confirmed.body.confirmation.status, 'CONFIRMED');
+
+  currentTime = new Date('2026-08-14T12:00:00Z');
+  const nextDay = await fixture.request('POST', '/api/admin/service-confirmations/dispatch');
+  assert.equal(nextDay.status, 200);
+  assert.equal(nextDay.body.sent, 1);
+  assert.equal(deliveries.length, 3);
+  assert.equal(deliveries[2].shift, 'NIGHT');
+
+  const administrative = await fixture.request('GET', '/api/admin/service-confirmations?year=2026&month=8');
+  assert.equal(administrative.status, 200);
+  assert.deepEqual(administrative.body.confirmations.map(item => item.status).sort(), ['AWAITING', 'CONFIRMED']);
+});
+
+test('a failed email remains eligible for retry on the same day', async t => {
+  let attempts = 0;
+  const deliveries = [];
+  const emailSender = {
+    async sendServiceConfirmation(message) {
+      attempts += 1;
+      if (attempts === 1) throw new Error('Temporary provider failure.');
+      deliveries.push(message);
+      return { id: `email-${attempts}` };
+    },
+    async sendExchangeRequest() {
+      throw new Error('Unexpected exchange email.');
+    }
+  };
+  const { fixture } = await createPublishedConfirmationFixture({
+    now: () => new Date('2026-08-13T12:00:00Z'),
+    emailSender
+  });
+  t.after(fixture.cleanup);
+
+  const firstRun = await fixture.request('POST', '/api/admin/service-confirmations/dispatch');
+  assert.equal(firstRun.status, 200);
+  assert.equal(firstRun.body.sent, 1);
+  assert.equal(firstRun.body.failed, 1);
+
+  const retry = await fixture.request('POST', '/api/admin/service-confirmations/dispatch');
+  assert.equal(retry.status, 200);
+  assert.equal(retry.body.sent, 1);
+  assert.equal(retry.body.failed, 0);
+  assert.equal(deliveries.length, 2);
+
+  const completed = await fixture.request('POST', '/api/admin/service-confirmations/dispatch');
+  assert.equal(completed.body.sent, 0);
+});
+
+test('confirmation flow requires a reason and swaps two published assignments after acceptance', async t => {
+  let currentTime = new Date('2026-08-13T12:00:00Z');
+  const deliveries = [];
+  const emailSender = {
+    async sendServiceConfirmation(message) {
+      deliveries.push({ ...message, kind: 'CONFIRMATION' });
+      return { id: `email-${deliveries.length}` };
+    },
+    async sendExchangeRequest(message) {
+      deliveries.push({ ...message, kind: 'EXCHANGE' });
+      return { id: `email-${deliveries.length}` };
+    }
+  };
+  const fixture = await createHttpFixture({
+    now: () => currentTime,
+    emailSender,
+    publicAppUrl: 'https://escala.test',
+    confirmationTokenSecret: 'test-confirmation-token-secret'
+  });
+  t.after(fixture.cleanup);
+
+  const requester = await fixture.request('POST', '/api/volunteers', {
+    name: 'Solicitante', email: 'requester-swap@test.local', proficiencies: { VMIX: 2 }
+  });
+  const target = await fixture.request('POST', '/api/volunteers', {
+    name: 'Destinatária', email: 'target-swap@test.local', proficiencies: { VMIX: 2 }
+  });
+  for (const volunteer of [requester.body, target.body]) {
+    await fixture.request('POST', '/api/admin/users', {
+      name: volunteer.name,
+      email: volunteer.email,
+      password: 'volunteer-password',
+      role: 'VOLUNTEER',
+      volunteerId: volunteer.id
+    });
+  }
+
+  const generated = await fixture.request('POST', '/api/schedule/generate', { year: 2026, month: 8 });
+  const scheduleId = generated.body.schedule.id;
+  await fixture.request('PUT', `/api/schedule/${scheduleId}`, {
+    assignments: [
+      { date: '2026-08-16', shift: 'MORNING', role: 'VMIX', volunteerId: requester.body.id },
+      { date: '2026-08-23', shift: 'NIGHT', role: 'VMIX', volunteerId: target.body.id }
+    ],
+    lockedSlots: []
+  });
+  const published = await fixture.request('POST', `/api/schedule/${scheduleId}/publish`, { confirmedWarnings: true });
+  const requesterAssignment = published.body.assignments.find(item => item.volunteer_id === requester.body.id);
+  const targetAssignment = published.body.assignments.find(item => item.volunteer_id === target.body.id);
+
+  await fixture.request('POST', '/api/admin/service-confirmations/dispatch');
+  const token = new URL(deliveries[0].confirmationUrl).searchParams.get('token');
+  const details = await fixture.requestUnauthenticated('GET', `/api/service-confirmations/${token}`);
+  assert.equal(details.status, 200);
+  assert.deepEqual(details.body.candidates.map(item => item.assignmentId), [targetAssignment.id]);
+
+  const missingReason = await fixture.requestUnauthenticated('POST', `/api/service-confirmations/${token}/exchange`, {
+    targetAssignmentId: targetAssignment.id,
+    reason: '   '
+  });
+  assert.equal(missingReason.status, 422);
+  assert.equal(missingReason.body.code, 'EXCHANGE_REASON_REQUIRED');
+
+  const requested = await fixture.requestUnauthenticated('POST', `/api/service-confirmations/${token}/exchange`, {
+    targetAssignmentId: targetAssignment.id,
+    reason: 'Estarei viajando pela manhã.'
+  });
+  assert.equal(requested.status, 201);
+  assert.equal(requested.body.exchange.status, 'PENDING');
+  assert.equal(requested.body.exchange.targetAssignmentId, targetAssignment.id);
+
+  currentTime = new Date('2026-08-14T12:00:00Z');
+  const pendingReminder = await fixture.request('POST', '/api/admin/service-confirmations/dispatch');
+  assert.equal(pendingReminder.status, 200);
+  assert.equal(pendingReminder.body.sent, 1);
+  assert.equal(deliveries.at(-1).kind, 'EXCHANGE');
+  assert.equal(deliveries.at(-1).to, target.body.email);
+
+  await fixture.loginAs(target.body.email);
+  const rejected = await fixture.request('POST', `/api/exchanges/${requested.body.exchange.id}/reject`, {
+    reason: 'Não consigo trocar nesta semana.'
+  });
+  assert.equal(rejected.status, 200);
+  assert.equal(rejected.body.exchange.status, 'REJECTED');
+
+  currentTime = new Date('2026-08-15T12:00:00Z');
+  await fixture.loginAs('leader@test.local');
+  const resumedReminder = await fixture.request('POST', '/api/admin/service-confirmations/dispatch');
+  assert.equal(resumedReminder.status, 200);
+  assert.equal(resumedReminder.body.sent, 1);
+  assert.equal(deliveries.at(-1).kind, 'CONFIRMATION');
+  assert.equal(deliveries.at(-1).to, requester.body.email);
+
+  const requestedAgain = await fixture.requestUnauthenticated('POST', `/api/service-confirmations/${token}/exchange`, {
+    targetAssignmentId: targetAssignment.id,
+    reason: 'Estarei viajando pela manhã.'
+  });
+  assert.equal(requestedAgain.status, 201);
+
+  await fixture.loginAs(target.body.email);
+  const accepted = await fixture.request('POST', `/api/exchanges/${requestedAgain.body.exchange.id}/accept`);
+  assert.equal(accepted.status, 200);
+  assert.equal(accepted.body.exchange.status, 'ACCEPTED');
+
+  await fixture.loginAs(requester.body.email);
+  const requesterSchedule = await fixture.request('GET', '/api/me/schedule?year=2026&month=8');
+  assert.equal(requesterSchedule.body.assignments.length, 1);
+  assert.equal(requesterSchedule.body.assignments[0].id, targetAssignment.id);
+  assert.equal(requesterSchedule.body.assignments[0].date, '2026-08-23');
+  assert.equal(requesterSchedule.body.assignments[0].shift, 'NIGHT');
+
+  await fixture.loginAs(target.body.email);
+  const targetSchedule = await fixture.request('GET', '/api/me/schedule?year=2026&month=8');
+  assert.equal(targetSchedule.body.assignments.length, 1);
+  assert.equal(targetSchedule.body.assignments[0].id, requesterAssignment.id);
+  assert.equal(targetSchedule.body.assignments[0].date, '2026-08-16');
+  assert.equal(targetSchedule.body.assignments[0].shift, 'MORNING');
+
+  await fixture.loginAs('leader@test.local');
+  const confirmations = await fixture.request('GET', '/api/admin/service-confirmations?year=2026&month=8');
+  assert.equal(confirmations.body.confirmations.filter(item => item.status === 'CONFIRMED').length, 2);
 });
 
 test('HTTP API preserves administrative data after a server restart', async t => {

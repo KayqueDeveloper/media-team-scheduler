@@ -3,6 +3,8 @@ node_modules/
 
 # Production build
 dist/
+test-results/
+playwright-report/
 
 # Database & local data
 server/db/database.sqlite
