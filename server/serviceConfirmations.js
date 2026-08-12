@@ -84,6 +84,13 @@ export function createServiceConfirmationModule({
     const row = await db.one(`${confirmationSelect} WHERE c.id = ?`, [id]);
     if (!row || row.status === 'SUPERSEDED') return null;
     if (!row.assignment_id || row.schedule_status !== 'PUBLISHED') return null;
+    if (row.date < calendarDate(now(), timeZone)) {
+      await db.run(`UPDATE service_confirmations
+        SET status = 'SUPERSEDED', superseded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND status != 'SUPERSEDED'
+      `, [id]);
+      return null;
+    }
     const assignment = await db.one('SELECT volunteer_id FROM assignments WHERE id = ?', [row.assignment_id]);
     return assignment?.volunteer_id === row.volunteer_id ? row : null;
   }
@@ -172,6 +179,15 @@ export function createServiceConfirmationModule({
           `, [nextStatus, nextStatus, exchange.confirmation_id]);
         }
       }
+      await tx.run(`
+        UPDATE service_confirmations
+        SET status = 'SUPERSEDED', superseded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE id IN (
+          SELECT c.id FROM service_confirmations c
+          JOIN assignments a ON a.id = c.assignment_id
+          WHERE a.date < ? AND c.status != 'SUPERSEDED'
+        )
+      `, [today]);
     });
     await ensureDueConfirmations(today);
     const due = await db.all(`${confirmationSelect}
@@ -242,6 +258,10 @@ export function createServiceConfirmationModule({
     for (const exchange of pendingExchanges) {
       if (!exchange.recipient_email || !emailSender?.sendExchangeRequest) {
         failed += 1;
+        await db.run(`UPDATE schedule_exchanges SET last_error = ? WHERE id = ? AND status = 'PENDING'`, [
+          !exchange.recipient_email ? 'Voluntário destinatário sem e-mail ativo.' : 'Provedor sem suporte a e-mail de troca.',
+          exchange.id
+        ]);
         continue;
       }
       try {
@@ -257,11 +277,15 @@ export function createServiceConfirmationModule({
           idempotencyKey: `schedule-exchange/${exchange.id}/${today}`
         });
         await db.run(`UPDATE schedule_exchanges
-          SET last_reminder_on = ? WHERE id = ? AND status = 'PENDING'
+          SET last_reminder_on = ?, last_error = NULL WHERE id = ? AND status = 'PENDING'
         `, [today, exchange.id]);
         sent += 1;
-      } catch {
+      } catch (error) {
         failed += 1;
+        await db.run(`UPDATE schedule_exchanges SET last_error = ? WHERE id = ? AND status = 'PENDING'`, [
+          String(error?.message || error),
+          exchange.id
+        ]);
       }
     }
     return { sent, failed, considered: due.length + pendingExchanges.length };

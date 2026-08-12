@@ -19,6 +19,7 @@ export function AdminExchangeManager({ exchanges = [] }) {
                 <strong>{exchange.date} · {exchange.shift} ↔ {exchange.targetDate} · {exchange.targetShift}</strong>
                 <span>{exchange.requesterName} ↔ {exchange.targetVolunteerName}</span>
                 {exchange.reason && <small className="portal-muted">Motivo: {exchange.reason}</small>}
+                {exchange.last_error && <small className="confirmation-error">Falha no envio: {exchange.last_error}</small>}
               </div>
               <span className={`portal-tag status-${exchange.status.toLowerCase()}`}><Icon size={14} /> {labels[exchange.status] || exchange.status}</span>
             </div>;

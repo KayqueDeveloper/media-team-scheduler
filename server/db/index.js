@@ -132,6 +132,7 @@ const SQLITE_SCHEMA = `
     rejection_reason TEXT,
     confirmation_id INTEGER,
     last_reminder_on TEXT,
+    last_error TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     responded_at DATETIME,
     completed_at DATETIME,
@@ -301,6 +302,7 @@ const POSTGRES_SCHEMA = `
     rejection_reason TEXT,
     confirmation_id INTEGER REFERENCES service_confirmations(id) ON DELETE SET NULL,
     last_reminder_on DATE,
+    last_error TEXT,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     responded_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ,
@@ -336,6 +338,10 @@ const POSTGRES_SCHEMA = `
   ALTER TABLE schedule_exchanges ADD COLUMN IF NOT EXISTS target_assignment_id INTEGER REFERENCES assignments(id) ON DELETE CASCADE;
   ALTER TABLE schedule_exchanges ADD COLUMN IF NOT EXISTS confirmation_id INTEGER REFERENCES service_confirmations(id) ON DELETE SET NULL;
   ALTER TABLE schedule_exchanges ADD COLUMN IF NOT EXISTS last_reminder_on DATE;
+  ALTER TABLE schedule_exchanges ADD COLUMN IF NOT EXISTS last_error TEXT;
+  UPDATE schedule_exchanges
+    SET status = 'EXPIRED', responded_at = CURRENT_TIMESTAMP, completed_at = CURRENT_TIMESTAMP
+    WHERE status = 'PENDING' AND target_assignment_id IS NULL;
 
   CREATE UNIQUE INDEX IF NOT EXISTS idx_volunteers_email_ci ON volunteers (LOWER(email)) WHERE email IS NOT NULL;
   CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_ci ON users (LOWER(email));
@@ -495,6 +501,10 @@ function initializeSqlite(db) {
   if (!exchangeColumns.has('target_assignment_id')) db.exec('ALTER TABLE schedule_exchanges ADD COLUMN target_assignment_id INTEGER REFERENCES assignments(id) ON DELETE CASCADE');
   if (!exchangeColumns.has('confirmation_id')) db.exec('ALTER TABLE schedule_exchanges ADD COLUMN confirmation_id INTEGER REFERENCES service_confirmations(id) ON DELETE SET NULL');
   if (!exchangeColumns.has('last_reminder_on')) db.exec('ALTER TABLE schedule_exchanges ADD COLUMN last_reminder_on TEXT');
+  if (!exchangeColumns.has('last_error')) db.exec('ALTER TABLE schedule_exchanges ADD COLUMN last_error TEXT');
+  db.exec(`UPDATE schedule_exchanges
+    SET status = 'EXPIRED', responded_at = CURRENT_TIMESTAMP, completed_at = CURRENT_TIMESTAMP
+    WHERE status = 'PENDING' AND target_assignment_id IS NULL`);
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_exchange_target_assignment
     ON schedule_exchanges(target_assignment_id) WHERE status = 'PENDING'`);
   db.exec('CREATE INDEX IF NOT EXISTS idx_exchanges_confirmation ON schedule_exchanges(confirmation_id)');
