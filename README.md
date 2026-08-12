@@ -111,7 +111,6 @@ No Render, configure:
 - `AUTH_EMAIL_REDIRECT_TO`: opcional; URL completa para onde o Supabase redireciona após confirmar um novo cadastro
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER` e `SMTP_PASS`: acesso SMTP; para Gmail, use `smtp.gmail.com`, porta `465` e uma senha de app
 - `EMAIL_FROM`: nome e endereço exibidos como remetente; com Gmail, deve usar a mesma conta de `SMTP_USER`
-- `RESEND_API_KEY`: alternativa opcional ao SMTP, exigindo remetente de domínio verificado
 - `PUBLIC_APP_URL`: origem pública do painel, usada nos links enviados por e-mail
 - `APP_TIME_ZONE`: fuso do calendário dos lembretes; padrão `America/Sao_Paulo`
 - `CONFIRMATION_TOKEN_SECRET`: segredo longo e aleatório usado para assinar os links públicos (obrigatório em produção)

@@ -1,12 +1,12 @@
 import { closeDatabase, getDatabase } from '../db/index.js';
-import { createConfiguredEmailSender } from '../email.js';
+import { createSmtpEmailSender } from '../email.js';
 import { createServiceConfirmationModule } from '../serviceConfirmations.js';
 
 async function main() {
   const db = getDatabase();
   await db.ready;
-  const emailSender = createConfiguredEmailSender();
-  if (!emailSender) throw new Error('Configure Gmail SMTP ou Resend antes de executar os lembretes.');
+  const emailSender = createSmtpEmailSender();
+  if (!emailSender) throw new Error('Configure Gmail SMTP antes de executar os lembretes.');
   const confirmations = createServiceConfirmationModule({
     db,
     emailSender,

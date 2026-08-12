@@ -79,33 +79,3 @@ export function createSmtpEmailSender({
     }
   });
 }
-
-export function createResendEmailSender({
-  apiKey = process.env.RESEND_API_KEY,
-  from = process.env.EMAIL_FROM,
-  publicAppUrl = process.env.PUBLIC_APP_URL || 'http://localhost:3000',
-  fetchImpl = globalThis.fetch
-} = {}) {
-  if (!apiKey || !from) return null;
-  return createEmailSender({
-    publicAppUrl,
-    async send(payload, idempotencyKey) {
-      const response = await fetchImpl('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${apiKey}`,
-          'content-type': 'application/json',
-          'idempotency-key': idempotencyKey
-        },
-        body: JSON.stringify({ from, ...payload })
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.message || `Falha ao enviar e-mail (${response.status}).`);
-      return body;
-    }
-  });
-}
-
-export function createConfiguredEmailSender(options = {}) {
-  return createSmtpEmailSender(options) || createResendEmailSender(options);
-}
