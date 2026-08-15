@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "references": [
+    { "path": "../../packages/contracts/tsconfig.build.json" },
+    { "path": "../../packages/scheduling-domain/tsconfig.build.json" }
+  ],
+  "exclude": [
+    "src/**/*.test.ts",
+    "../../server/**/*.test.ts",
+    "../../server/db/test.ts",
+    "../../server/db/seed.ts",
+    "../../server/db/importVolunteers.ts",
+    "../../server/db/migrateSqliteToPostgres.ts",
+    "../../server/jobs/**/*.ts"
+  ]
+}

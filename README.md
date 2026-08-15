@@ -4,8 +4,8 @@ Painel administrativo para cadastrar a equipe de transmissão, registrar indispo
 
 ## Requisitos
 
-- Node.js compatível com as versões declaradas no `package-lock.json`
-- npm
+- Node.js 24 LTS
+- npm 11
 
 ## Instalação
 
@@ -92,7 +92,7 @@ O access token Supabase é enviado pelo frontend em uma requisição CORS; o ser
 
 ## Produção com Render e Supabase
 
-Em produção, o backend usa PostgreSQL quando `DATABASE_URL` está configurada. Sem essa variável, o ambiente local continua usando SQLite.
+Em produção, o backend usa PostgreSQL quando `DATABASE_URL` está configurada. Sem essa variável, o ambiente local continua usando SQLite. O schema PostgreSQL é controlado pelas migrações versionadas em `supabase/migrations`; a API apenas verifica a conexão durante o startup e nunca altera o schema.
 
 No Render, configure:
 
@@ -114,6 +114,8 @@ No Render, configure:
 - `PUBLIC_APP_URL`: origem pública do painel, usada nos links enviados por e-mail
 - `APP_TIME_ZONE`: fuso do calendário dos lembretes; padrão `America/Sao_Paulo`
 - `CONFIRMATION_TOKEN_SECRET`: segredo longo e aleatório usado para assinar os links públicos (obrigatório em produção)
+- `LOG_LEVEL`: nível dos logs JSON do backend em produção; padrão `info`
+- `DB_SSL`: use `disable` somente em um PostgreSQL local sem TLS; em produção, o certificado é validado
 
 As variáveis `VITE_*` precisam estar configuradas antes do build do Render, pois o Vite as incorpora no bundle público. Nunca use `SUPABASE_SECRET_KEY` com o prefixo `VITE_`.
 
@@ -127,7 +129,14 @@ DATABASE_URL='postgresql://...' MIGRATION_REPLACE=true npm run migrate:postgres
 
 O comando lê `server/db/database.sqlite` por padrão. Para indicar outro arquivo, use `SQLITE_PATH=/caminho/arquivo.sqlite`. `MIGRATION_REPLACE=true` apaga os dados das tabelas de destino antes da importação; use somente em um projeto novo ou após confirmar o backup.
 
-O schema do PostgreSQL é criado automaticamente na primeira inicialização da API. Não execute `npm run seed` contra o Supabase de produção: ele limpa e recria os dados.
+Antes do primeiro deploy, vincule a CLI ao projeto correto e aplique as migrações:
+
+```bash
+npx supabase link --project-ref <project-ref>
+npx supabase db push
+```
+
+Revise o projeto e faça backup antes do `db push`. Não execute `npm run seed` contra o Supabase de produção: ele limpa e recria os dados.
 
 ### Confirmações e lembretes diários
 
@@ -144,13 +153,28 @@ O comando é idempotente por item e data. Falhas de envio não marcam o lembrete
 ## Verificação
 
 ```bash
+npm run format:check
+npm run lint
+npm run architecture:check
 npm test
 npm run test:db
 npm run test:e2e
 npm run build
 ```
 
-O conjunto de testes cobre as regras do gerador, os fluxos públicos da API com banco temporário e a confirmação/troca no Chromium via Playwright.
+O conjunto de testes cobre contratos e regras TypeScript, as regras do gerador, os fluxos públicos da API com banco temporário e a confirmação/troca no Chromium via Playwright.
+
+## Arquitetura em migração
+
+O repositório é um monólito modular em transição:
+
+- `apps/api`: composition root Node.js/Express e módulos do backend;
+- `apps/web`: composition root React e módulos do frontend;
+- `packages/contracts`: schemas Zod e DTOs compartilhados;
+- `packages/scheduling-domain`: geração, validação e cobertura da escala sem dependência de HTTP, React ou banco;
+- `supabase/migrations`: fonte de verdade do schema PostgreSQL.
+
+Arquivos em `server` e `src` continuam como adapters de compatibilidade enquanto as fatias restantes são migradas. Consulte o [plano de migração](docs/typescript-clean-architecture-migration-plan.md) e o [ADR 0014](docs/adr/0014-typescript-e-monolito-modular-com-clean-architecture.md).
 
 ## Escopo
 
