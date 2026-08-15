@@ -113,12 +113,63 @@ const SQLITE_SCHEMA = `
     last_error TEXT,
     responded_at DATETIME,
     superseded_at DATETIME,
+    confirmation_source TEXT CHECK (confirmation_source IN ('VOLUNTEER', 'COORDINATOR', 'LEADER', 'COVERAGE')),
+    confirmed_by_user_id INTEGER,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE,
     FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE SET NULL,
     FOREIGN KEY (volunteer_id) REFERENCES volunteers(id) ON DELETE CASCADE,
+    FOREIGN KEY (confirmed_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
     UNIQUE(assignment_id, volunteer_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS coverage_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    schedule_id INTEGER NOT NULL,
+    assignment_id INTEGER NOT NULL,
+    original_volunteer_id INTEGER NOT NULL,
+    created_by_user_id INTEGER NOT NULL,
+    winner_volunteer_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'FILLED', 'CANCELLED', 'EXPIRED')),
+    reason TEXT NOT NULL,
+    opened_early INTEGER NOT NULL DEFAULT 0 CHECK (opened_early IN (0, 1)),
+    filled_at DATETIME,
+    cancelled_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE,
+    FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE,
+    FOREIGN KEY (original_volunteer_id) REFERENCES volunteers(id),
+    FOREIGN KEY (created_by_user_id) REFERENCES users(id),
+    FOREIGN KEY (winner_volunteer_id) REFERENCES volunteers(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS coverage_invitations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    coverage_request_id INTEGER NOT NULL,
+    volunteer_id INTEGER NOT NULL,
+    invited_by_user_id INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'ACCEPTED', 'DECLINED', 'FILLED_BY_OTHER', 'CANCELLED', 'EXPIRED', 'NO_LONGER_ELIGIBLE')),
+    responded_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (coverage_request_id) REFERENCES coverage_requests(id) ON DELETE CASCADE,
+    FOREIGN KEY (volunteer_id) REFERENCES volunteers(id) ON DELETE CASCADE,
+    FOREIGN KEY (invited_by_user_id) REFERENCES users(id),
+    UNIQUE(coverage_request_id, volunteer_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS service_contact_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    assignment_id INTEGER NOT NULL,
+    volunteer_id INTEGER NOT NULL,
+    actor_user_id INTEGER NOT NULL,
+    channel TEXT NOT NULL CHECK (channel IN ('WHATSAPP', 'PHONE', 'EMAIL', 'IN_PERSON', 'OTHER')),
+    note TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE,
+    FOREIGN KEY (volunteer_id) REFERENCES volunteers(id) ON DELETE CASCADE,
+    FOREIGN KEY (actor_user_id) REFERENCES users(id)
   );
 
   CREATE TABLE IF NOT EXISTS schedule_exchanges (
@@ -152,6 +203,7 @@ const SQLITE_SCHEMA = `
     from_version INTEGER NOT NULL,
     to_version INTEGER NOT NULL,
     exchange_id INTEGER,
+    coverage_request_id INTEGER,
     assignment_id INTEGER NOT NULL,
     previous_volunteer_id INTEGER NOT NULL,
     new_volunteer_id INTEGER NOT NULL,
@@ -159,6 +211,7 @@ const SQLITE_SCHEMA = `
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE,
     FOREIGN KEY (exchange_id) REFERENCES schedule_exchanges(id) ON DELETE SET NULL,
+    FOREIGN KEY (coverage_request_id) REFERENCES coverage_requests(id) ON DELETE SET NULL,
     FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE,
     FOREIGN KEY (previous_volunteer_id) REFERENCES volunteers(id),
     FOREIGN KEY (new_volunteer_id) REFERENCES volunteers(id),
@@ -170,11 +223,13 @@ const SQLITE_SCHEMA = `
     user_id INTEGER NOT NULL,
     type TEXT NOT NULL,
     exchange_id INTEGER,
+    coverage_request_id INTEGER,
     message TEXT NOT NULL,
     read_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (exchange_id) REFERENCES schedule_exchanges(id) ON DELETE SET NULL
+    FOREIGN KEY (exchange_id) REFERENCES schedule_exchanges(id) ON DELETE SET NULL,
+    FOREIGN KEY (coverage_request_id) REFERENCES coverage_requests(id) ON DELETE SET NULL
   );
 
   CREATE INDEX IF NOT EXISTS idx_exchanges_requester ON schedule_exchanges(requester_id);
@@ -190,9 +245,18 @@ const SQLITE_SCHEMA = `
     ON service_confirmations(schedule_id, volunteer_id);
   CREATE INDEX IF NOT EXISTS idx_service_confirmations_volunteer
     ON service_confirmations(volunteer_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_open_coverage_assignment
+    ON coverage_requests(assignment_id) WHERE status = 'OPEN';
+  CREATE INDEX IF NOT EXISTS idx_coverage_schedule ON coverage_requests(schedule_id);
+  CREATE INDEX IF NOT EXISTS idx_coverage_creator ON coverage_requests(created_by_user_id);
+  CREATE INDEX IF NOT EXISTS idx_coverage_invitations_volunteer
+    ON coverage_invitations(volunteer_id, status, created_at);
+  CREATE INDEX IF NOT EXISTS idx_contact_attempts_assignment
+    ON service_contact_attempts(assignment_id, created_at);
 `;
 
 function createSqliteAdapter(db) {
+  let transactionTail = Promise.resolve();
   const adapter = {
     dialect: 'sqlite',
     ready: Promise.resolve(),
@@ -214,7 +278,13 @@ function createSqliteAdapter(db) {
       db.exec(sql);
     },
     async transaction(callback) {
-      db.exec('BEGIN');
+      let releaseTransaction;
+      const previousTransaction = transactionTail;
+      transactionTail = new Promise((resolve) => {
+        releaseTransaction = resolve;
+      });
+      await previousTransaction;
+      db.exec('BEGIN IMMEDIATE');
       try {
         const result = await callback(adapter);
         db.exec('COMMIT');
@@ -222,6 +292,8 @@ function createSqliteAdapter(db) {
       } catch (error) {
         db.exec('ROLLBACK');
         throw error;
+      } finally {
+        releaseTransaction();
       }
     },
     async close() {
@@ -237,11 +309,12 @@ function replacePlaceholders(sql) {
 }
 
 function createPostgresAdapter(connectionString) {
-  const ssl = process.env.DB_SSL === 'disable'
-    ? false
-    : process.env.NODE_ENV === 'production'
-      ? { rejectUnauthorized: true }
-      : undefined;
+  const ssl =
+    process.env.DB_SSL === 'disable'
+      ? false
+      : process.env.NODE_ENV === 'production'
+        ? { rejectUnauthorized: true }
+        : undefined;
   const pool = new Pool({
     connectionString,
     max: Number(process.env.DB_POOL_MAX || 5),
@@ -253,7 +326,7 @@ function createPostgresAdapter(connectionString) {
   // PostgreSQL schema changes are applied by versioned Supabase migrations.
   // Startup only verifies connectivity and never mutates production state.
   const schemaReady = pool.query('SELECT 1 AS ok');
-  const adapterFor = client => ({
+  const adapterFor = (client) => ({
     dialect: 'postgres',
     ready: schemaReady,
     async one(sql, params = []) {
@@ -279,7 +352,7 @@ function createPostgresAdapter(connectionString) {
   });
 
   const adapter = adapterFor(pool);
-  adapter.transaction = async callback => {
+  adapter.transaction = async (callback) => {
     await schemaReady;
     const client = await pool.connect();
     const transactionAdapter = adapterFor(client);
@@ -304,41 +377,80 @@ function initializeSqlite(db) {
   db.exec(SQLITE_SCHEMA);
 
   const assignmentsInfo = db.prepare('PRAGMA table_info(assignments)').all();
-  if (!assignmentsInfo.some(column => column.name === 'is_trainee')) {
+  if (!assignmentsInfo.some((column) => column.name === 'is_trainee')) {
     db.exec('ALTER TABLE assignments ADD COLUMN is_trainee INTEGER DEFAULT 0 CHECK (is_trainee IN (0, 1))');
   }
   const volunteersInfo = db.prepare('PRAGMA table_info(volunteers)').all();
-  if (!volunteersInfo.some(column => column.name === 'allowed_shift')) {
+  if (!volunteersInfo.some((column) => column.name === 'allowed_shift')) {
     db.exec("ALTER TABLE volunteers ADD COLUMN allowed_shift TEXT DEFAULT 'ALL'");
   }
   const scheduleInfo = db.prepare('PRAGMA table_info(schedules)').all();
-  const scheduleColumns = new Set(scheduleInfo.map(column => column.name));
-  if (!scheduleColumns.has('locked_slots')) db.exec("ALTER TABLE schedules ADD COLUMN locked_slots TEXT NOT NULL DEFAULT '[]'");
-  if (!scheduleColumns.has('warnings')) db.exec("ALTER TABLE schedules ADD COLUMN warnings TEXT NOT NULL DEFAULT '[]'");
-  if (!scheduleColumns.has('published_version')) db.exec('ALTER TABLE schedules ADD COLUMN published_version INTEGER NOT NULL DEFAULT 0');
+  const scheduleColumns = new Set(scheduleInfo.map((column) => column.name));
+  if (!scheduleColumns.has('locked_slots'))
+    db.exec("ALTER TABLE schedules ADD COLUMN locked_slots TEXT NOT NULL DEFAULT '[]'");
+  if (!scheduleColumns.has('warnings'))
+    db.exec("ALTER TABLE schedules ADD COLUMN warnings TEXT NOT NULL DEFAULT '[]'");
+  if (!scheduleColumns.has('published_version'))
+    db.exec('ALTER TABLE schedules ADD COLUMN published_version INTEGER NOT NULL DEFAULT 0');
 
   const usersInfo = db.prepare('PRAGMA table_info(users)').all();
-  const userColumns = new Set(usersInfo.map(column => column.name));
+  const userColumns = new Set(usersInfo.map((column) => column.name));
   if (!userColumns.has('auth_user_id')) db.exec('ALTER TABLE users ADD COLUMN auth_user_id TEXT');
-  if (!userColumns.has('approval_status')) db.exec("ALTER TABLE users ADD COLUMN approval_status TEXT NOT NULL DEFAULT 'APPROVED'");
-  if (!userColumns.has('email_confirmed_at')) db.exec('ALTER TABLE users ADD COLUMN email_confirmed_at DATETIME');
-  if (usersInfo.some(column => column.name === 'password_hash')) {
+  if (!userColumns.has('approval_status'))
+    db.exec("ALTER TABLE users ADD COLUMN approval_status TEXT NOT NULL DEFAULT 'APPROVED'");
+  if (!userColumns.has('email_confirmed_at'))
+    db.exec('ALTER TABLE users ADD COLUMN email_confirmed_at DATETIME');
+  if (usersInfo.some((column) => column.name === 'password_hash')) {
     db.exec('ALTER TABLE users DROP COLUMN password_hash');
   }
-  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_auth_user_id ON users (auth_user_id) WHERE auth_user_id IS NOT NULL');
-  db.exec('CREATE INDEX IF NOT EXISTS idx_users_pending_approval ON users (approval_status, email_confirmed_at, created_at)');
+  db.exec(
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_auth_user_id ON users (auth_user_id) WHERE auth_user_id IS NOT NULL'
+  );
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS idx_users_pending_approval ON users (approval_status, email_confirmed_at, created_at)'
+  );
   const exchangeInfo = db.prepare('PRAGMA table_info(schedule_exchanges)').all();
-  const exchangeColumns = new Set(exchangeInfo.map(column => column.name));
-  if (!exchangeColumns.has('target_assignment_id')) db.exec('ALTER TABLE schedule_exchanges ADD COLUMN target_assignment_id INTEGER REFERENCES assignments(id) ON DELETE CASCADE');
-  if (!exchangeColumns.has('confirmation_id')) db.exec('ALTER TABLE schedule_exchanges ADD COLUMN confirmation_id INTEGER REFERENCES service_confirmations(id) ON DELETE SET NULL');
-  if (!exchangeColumns.has('last_reminder_on')) db.exec('ALTER TABLE schedule_exchanges ADD COLUMN last_reminder_on TEXT');
-  if (!exchangeColumns.has('last_error')) db.exec('ALTER TABLE schedule_exchanges ADD COLUMN last_error TEXT');
+  const exchangeColumns = new Set(exchangeInfo.map((column) => column.name));
+  if (!exchangeColumns.has('target_assignment_id'))
+    db.exec(
+      'ALTER TABLE schedule_exchanges ADD COLUMN target_assignment_id INTEGER REFERENCES assignments(id) ON DELETE CASCADE'
+    );
+  if (!exchangeColumns.has('confirmation_id'))
+    db.exec(
+      'ALTER TABLE schedule_exchanges ADD COLUMN confirmation_id INTEGER REFERENCES service_confirmations(id) ON DELETE SET NULL'
+    );
+  if (!exchangeColumns.has('last_reminder_on'))
+    db.exec('ALTER TABLE schedule_exchanges ADD COLUMN last_reminder_on TEXT');
+  if (!exchangeColumns.has('last_error'))
+    db.exec('ALTER TABLE schedule_exchanges ADD COLUMN last_error TEXT');
   db.exec(`UPDATE schedule_exchanges
     SET status = 'EXPIRED', responded_at = CURRENT_TIMESTAMP, completed_at = CURRENT_TIMESTAMP
     WHERE status = 'PENDING' AND target_assignment_id IS NULL`);
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_exchange_target_assignment
     ON schedule_exchanges(target_assignment_id) WHERE status = 'PENDING'`);
   db.exec('CREATE INDEX IF NOT EXISTS idx_exchanges_confirmation ON schedule_exchanges(confirmation_id)');
+  const confirmationInfo = db.prepare('PRAGMA table_info(service_confirmations)').all();
+  const confirmationColumns = new Set(confirmationInfo.map((column) => column.name));
+  if (!confirmationColumns.has('confirmation_source'))
+    db.exec('ALTER TABLE service_confirmations ADD COLUMN confirmation_source TEXT');
+  if (!confirmationColumns.has('confirmed_by_user_id'))
+    db.exec(
+      'ALTER TABLE service_confirmations ADD COLUMN confirmed_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL'
+    );
+  const changeEventInfo = db.prepare('PRAGMA table_info(schedule_change_events)').all();
+  if (!changeEventInfo.some((column) => column.name === 'coverage_request_id'))
+    db.exec(
+      'ALTER TABLE schedule_change_events ADD COLUMN coverage_request_id INTEGER REFERENCES coverage_requests(id) ON DELETE SET NULL'
+    );
+  const notificationInfo = db.prepare('PRAGMA table_info(notifications)').all();
+  if (!notificationInfo.some((column) => column.name === 'coverage_request_id'))
+    db.exec(
+      'ALTER TABLE notifications ADD COLUMN coverage_request_id INTEGER REFERENCES coverage_requests(id) ON DELETE SET NULL'
+    );
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS idx_change_events_coverage ON schedule_change_events(coverage_request_id)'
+  );
+  db.exec('CREATE INDEX IF NOT EXISTS idx_notifications_coverage ON notifications(coverage_request_id)');
   db.exec('DROP TABLE IF EXISTS sessions');
 }
 
@@ -349,7 +461,9 @@ export function getDatabase(dbPath) {
   const nextKey = usePostgres ? `postgres:${process.env.DATABASE_URL}` : `sqlite:${resolvedPath}`;
   if (dbInstance && dbKey === nextKey) return dbInstance;
   if (dbInstance && dbKey !== nextKey) {
-    throw new Error('A different database was requested while another database is still open. Close it first.');
+    throw new Error(
+      'A different database was requested while another database is still open. Close it first.'
+    );
   }
 
   if (usePostgres) {

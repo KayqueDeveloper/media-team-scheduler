@@ -83,6 +83,18 @@ _Avoid_: Excluído, removido
 Solicitação de um novo voluntário que já confirmou o e-mail, mas ainda aguarda aprovação do líder. Não possui acesso ao portal e não aparece na gestão normal de voluntários.
 _Avoid_: Voluntário inativo, conta bloqueada
 
+**Escopo de coordenação**:
+Permissão operacional de um voluntário ativo com proficiência N1 ou superior na função Coordenador. Não equivale a acesso de líder e só alcança os turnos publicados em que o voluntário está escalado como coordenador.
+_Avoid_: Perfil de coordenador, administrador, líder
+
+**Solicitação de cobertura**:
+Pedido iniciado pelo líder ou coordenador para preencher uma alocação cujo voluntário não respondeu e não solicitou troca. Pode convidar vários voluntários elegíveis, mas é concluído pelo primeiro aceite válido.
+_Avoid_: Troca, substituição direta, vaga livre
+
+**Convite de cobertura**:
+Convite dirigido a um voluntário elegível dentro de uma solicitação de cobertura. Deixa de aceitar respostas quando outro convite preenche a alocação.
+_Avoid_: Troca, convocação obrigatória
+
 
 ## Fases de Desenvolvimento
 

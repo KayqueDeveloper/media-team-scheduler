@@ -11,12 +11,12 @@ describe('migração PostgreSQL de linha de base', () => {
     const database = new PGlite();
     const migrationFiles = readdirSync(migrationsDirectory).filter((file) => file.endsWith('.sql'));
 
-    expect(migrationFiles).toHaveLength(1);
-    const migrationFile = migrationFiles[0];
-    if (migrationFile === undefined) throw new Error('A migração de linha de base não foi encontrada.');
+    expect(migrationFiles.length).toBeGreaterThanOrEqual(1);
 
     await database.exec('create role anon; create role authenticated;');
-    await database.exec(readFileSync(`${migrationsDirectory}/${migrationFile}`, 'utf8'));
+    for (const migrationFile of migrationFiles.sort()) {
+      await database.exec(readFileSync(`${migrationsDirectory}/${migrationFile}`, 'utf8'));
+    }
 
     const result = await database.query<{ relname: string; relrowsecurity: boolean }>(`
       select relname, relrowsecurity
@@ -26,12 +26,13 @@ describe('migração PostgreSQL de linha de base', () => {
         and relname in (
           'volunteers', 'proficiencies', 'unavailabilities', 'schedules',
           'assignments', 'schedule_versions', 'users', 'service_confirmations',
-          'schedule_exchanges', 'schedule_change_events', 'notifications'
+          'schedule_exchanges', 'schedule_change_events', 'notifications',
+          'coverage_requests', 'coverage_invitations', 'service_contact_attempts'
         )
       order by relname
     `);
 
-    expect(result.rows).toHaveLength(11);
+    expect(result.rows).toHaveLength(14);
     expect(result.rows.every((table) => table.relrowsecurity)).toBe(true);
 
     await database.close();
