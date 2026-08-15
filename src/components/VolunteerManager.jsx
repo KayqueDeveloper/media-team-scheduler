@@ -99,7 +99,7 @@ export const VolunteerManager = ({
           <p>Cadastre voluntários, defina restrição de turnos (Manhã/Noite) e ajuste o nível técnico nas 6 funções.</p>
         </div>
 
-        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+        <div className="manager-toolbar-actions">
           <div className="search-box">
             <Search size={16} style={{ color: 'var(--text-muted)' }} />
             <input 
@@ -131,7 +131,7 @@ export const VolunteerManager = ({
                 </div>
               </div>
 
-              <div style={{ display: 'flex', gap: '0.4rem' }}>
+              <div className="volunteer-card-actions">
                 <button
                   className="btn btn-outline"
                   style={{ padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}
@@ -155,9 +155,9 @@ export const VolunteerManager = ({
             </div>
 
             {/* Shift Restriction Lock Selector */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(10, 14, 26, 0.5)', padding: '0.55rem 0.75rem', borderRadius: '8px', fontSize: '0.8rem', gap: '0.5rem' }}>
+            <div className="shift-restriction">
               <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Turno Permitido:</span>
-              <div style={{ display: 'flex', gap: '0.25rem' }}>
+              <div className="shift-restriction-actions">
                 <button 
                   type="button"
                   className={`btn ${(vol.allowedShift || 'ALL') === 'ALL' ? 'btn-primary' : 'btn-outline'}`}

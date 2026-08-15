@@ -10,7 +10,15 @@ export default defineConfig({
     trace: 'on-first-retry'
   },
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] } }
+    { name: 'desktop-chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'mobile-chromium', use: { ...devices['Pixel 5'] } },
+    {
+      name: 'mobile-small-chromium',
+      use: {
+        ...devices['Pixel 5'],
+        viewport: { width: 320, height: 568 }
+      }
+    }
   ],
   webServer: {
     command: 'npm run dev -- --host 127.0.0.1 --port 4173 --strictPort',

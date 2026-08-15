@@ -32,7 +32,9 @@ export const ScheduleMatrix = ({
   onToggleLockSlot,
   readOnly = false
 }) => {
-  const [viewMode, setViewMode] = useState('table'); // 'table' (Official PDF style) | 'grid' (Interactive Cards)
+  const [viewMode, setViewMode] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches ? 'grid' : 'table'
+  ); // 'table' (Official PDF style) | 'grid' (Interactive Cards)
 
   const volunteersMap = React.useMemo(() => {
     return volunteers.reduce((acc, v) => {
@@ -83,7 +85,7 @@ export const ScheduleMatrix = ({
           <p>Alocações principais N2/N3 e treinamento N1 acompanhado exclusivamente por mentor N3.</p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+        <div className="matrix-toolbar">
           {/* Action button inside Matrix header */}
           {onGenerateAuto && (
             <button className="btn btn-secondary" onClick={onGenerateAuto} disabled={readOnly} title="Preencher ou recalcular a proposta pelo gerador do backend">
@@ -93,10 +95,9 @@ export const ScheduleMatrix = ({
           )}
 
           {/* Mode Switcher Buttons */}
-          <div style={{ display: 'flex', background: 'rgba(15, 23, 42, 0.6)', padding: '4px', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
+          <div className="view-mode-switcher" role="group" aria-label="Modo de visualização da escala">
             <button 
               className={`btn ${viewMode === 'table' ? 'btn-primary' : 'btn-outline'}`}
-              style={{ padding: '0.35rem 0.75rem', fontSize: '0.85rem' }}
               onClick={() => setViewMode('table')}
             >
               <Table size={15} />
@@ -104,7 +105,6 @@ export const ScheduleMatrix = ({
             </button>
             <button 
               className={`btn ${viewMode === 'grid' ? 'btn-primary' : 'btn-outline'}`}
-              style={{ padding: '0.35rem 0.75rem', fontSize: '0.85rem' }}
               onClick={() => setViewMode('grid')}
             >
               <LayoutGrid size={15} />
@@ -177,7 +177,7 @@ export const ScheduleMatrix = ({
                                     onClick={() => onToggleLockSlot && onToggleLockSlot(sunday.date, shiftItem.id, role.id)}
                                     disabled={readOnly}
                                     aria-label={isLocked ? `Destravar vaga de ${role.name} em ${sunday.formatted} no turno ${shiftItem.label}` : `Travar vaga de ${role.name} em ${sunday.formatted} no turno ${shiftItem.label}`}
-                                    style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: isLocked ? 'var(--accent-amber)' : 'var(--text-dim)', padding: '2px 4px' }}
+                                    className={`slot-lock-button ${isLocked ? 'locked' : ''}`}
                                     title={isLocked ? 'Vaga travada (fixa durante a geração automática)' : 'Vaga livre (clique para travar)'}
                                   >
                                     {isLocked ? <Lock size={14} /> : <Unlock size={14} />}
@@ -314,7 +314,7 @@ export const ScheduleMatrix = ({
                                   onClick={() => onToggleLockSlot && onToggleLockSlot(sunday.date, shift.id, role.id)}
                                   disabled={readOnly}
                                   aria-label={isLocked ? `Destravar vaga de ${role.name} em ${sunday.formatted} no turno ${shift.name}` : `Travar vaga de ${role.name} em ${sunday.formatted} no turno ${shift.name}`}
-                                  style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: isLocked ? 'var(--accent-amber)' : 'var(--text-dim)', padding: 0 }}
+                                  className={`slot-lock-button ${isLocked ? 'locked' : ''}`}
                                   title={isLocked ? 'Vaga travada (fixa durante a geração automática)' : 'Vaga livre (clique para travar)'}
                                 >
                                   {isLocked ? <Lock size={14} /> : <Unlock size={14} />}

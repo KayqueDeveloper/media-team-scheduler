@@ -62,8 +62,8 @@ export const PdfExporter = ({
 
   return (
     <div className="pdf-exporter-wrapper">
-      <div className="no-print glass-panel" style={{ padding: '1.5rem', marginBottom: '1.5rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+      <div className="no-print glass-panel pdf-export-controls">
+        <div className="pdf-export-toolbar">
           <div>
             <h2 style={{ fontSize: '1.25rem' }}>Exportação da Escala de Transmissão</h2>
             <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
@@ -88,7 +88,7 @@ export const PdfExporter = ({
             )}
           </div>
 
-          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <div className="pdf-export-actions">
             <button className="btn btn-outline" onClick={handlePrint}>
               <Printer size={16} />
               Imprimir

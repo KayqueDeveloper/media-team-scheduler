@@ -31,6 +31,16 @@ export const DashboardHeader = ({
   onLogout,
   pendingCount = 0
 }) => {
+  const sectionLabels = {
+    schedule: 'Matriz de Escala',
+    volunteers: 'Voluntários & Proficiências',
+    unavailability: 'Indisponibilidades',
+    print: 'Visualização para Impressão',
+    exchanges: 'Trocas',
+    confirmations: 'Confirmações',
+    registrations: `Cadastros${pendingCount > 0 ? ` (${pendingCount})` : ''}`
+  };
+
   return (
     <header className="dashboard-header glass-panel">
       <div className="header-top">
@@ -51,6 +61,7 @@ export const DashboardHeader = ({
               className="month-btn" 
               onClick={() => onMonthChange(-1)} 
               title="Mês Anterior"
+              aria-label="Mês anterior"
               disabled={disabled}
             >
               <ChevronLeft size={18} />
@@ -60,6 +71,7 @@ export const DashboardHeader = ({
               className="month-btn" 
               onClick={() => onMonthChange(1)} 
               title="Próximo Mês"
+              aria-label="Próximo mês"
               disabled={disabled}
             >
               <ChevronRight size={18} />
@@ -101,6 +113,20 @@ export const DashboardHeader = ({
       </div>
 
       {/* Navigation Tabs */}
+      <label className="mobile-section-nav">
+        <span>Seção do painel</span>
+        <select
+          value={activeTab}
+          onChange={event => onTabChange(event.target.value)}
+          disabled={disabled}
+          aria-label="Seção do painel"
+        >
+          {Object.entries(sectionLabels).map(([value, label]) => (
+            <option key={value} value={value}>{label}</option>
+          ))}
+        </select>
+      </label>
+
       <nav className="header-tabs">
         <button
           className={`tab-btn ${activeTab === 'schedule' ? 'active' : ''}`}

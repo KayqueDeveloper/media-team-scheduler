@@ -114,7 +114,7 @@ export const UnavailabilityManager = ({
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                <div className="unavail-actions">
                   <span className="unavail-date-tag">
                     <Calendar size={14} />
                     {getSundayFormatted(unavail.date)} - Turno {getShiftName(unavail.shift)}
@@ -122,10 +122,10 @@ export const UnavailabilityManager = ({
 
                   <button 
                     className="btn btn-danger"
-                    style={{ padding: '0.4rem 0.6rem' }}
                     onClick={() => onRemoveUnavailability(unavail.id)}
                     disabled={disabled}
                     title="Remover Indisponibilidade"
+                    aria-label={`Remover indisponibilidade de ${vol ? vol.name : 'voluntário'}`}
                   >
                     <Trash2 size={16} />
                   </button>
