@@ -32,7 +32,7 @@
     "typecheck": "tsc -b && tsc -p apps/web/tsconfig.json && tsc -p tsconfig.legacy.json",
     "lint": "node --experimental-strip-types ./node_modules/eslint/bin/eslint.js --flag unstable_native_nodejs_ts_config apps packages vitest.config.ts --max-warnings=0",
     "architecture:check": "depcruise apps packages server src e2e --config .dependency-cruiser.ts",
-    "format:check": "prettier --check apps packages *.json *.ts .dependency-cruiser.ts",
+    "format:check": "prettier --check apps packages .github/workflows *.json *.ts .dependency-cruiser.ts",
     "test:typed": "vitest run",
     "build": "npm run typecheck && vite build",
     "preview": "vite preview",

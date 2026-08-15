@@ -164,6 +164,8 @@ npm run build
 
 O conjunto de testes cobre contratos e regras TypeScript, as regras do gerador, os fluxos públicos da API com banco temporário e a confirmação/troca no Chromium via Playwright.
 
+O workflow de integração contínua executa essas verificações em todo pull request e push para `main`, usando a versão do Node.js definida em `.node-version`. Falhas nos testes de navegador publicam os resultados do Playwright como artefato da execução.
+
 ## Arquitetura em migração
 
 O repositório é um monólito modular em transição:

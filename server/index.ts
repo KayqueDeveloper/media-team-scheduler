@@ -55,7 +55,7 @@ import {
   summarizeCoverage,
   validateSchedule as validateScheduleDomain
 } from './solver/scheduler.js';
-import { getUnavailabilityCutoff } from '../apps/api/dist/modules/availability/domain/policy.js';
+import { getUnavailabilityCutoff } from '../apps/api/src/modules/availability/domain/policy.js';
 import {
   approvePendingRegistration,
   createPendingRegistration,
