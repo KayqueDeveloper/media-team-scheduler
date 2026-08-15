@@ -17,6 +17,7 @@ import { RegistrationPage } from './components/RegistrationPage';
 import { ResetPasswordPage } from './components/ResetPasswordPage';
 import { ServiceConfirmationPage } from './components/ServiceConfirmationPage';
 import { AdminConfirmationManager } from './components/AdminConfirmationManager';
+import { CoordinatorDashboard } from './components/CoordinatorDashboard';
 import { getCurrentBusinessMonth, getSundaysForMonth, MONTH_NAMES, ROLES, SHIFTS } from './domain/catalog';
 import {
   collectScheduleWarnings,
@@ -625,7 +626,10 @@ export function App() {
             )}
 
             {activeTab === 'confirmations' && (
-              <AdminConfirmationManager confirmations={serviceConfirmations} />
+              <>
+                <CoordinatorDashboard user={authUser} api={api} year={year} month={month} />
+                <AdminConfirmationManager confirmations={serviceConfirmations} />
+              </>
             )}
 
             {activeTab === 'registrations' && (

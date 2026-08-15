@@ -409,6 +409,59 @@ export function createApiClient({
     async markAllNotificationsRead() {
       return request('/me/notifications/read-all', { method: 'POST' });
     },
+    async getMyCoverageInvitations({ signal } = {}) {
+      const payload = await request('/me/coverage-invitations', { signal });
+      return payload.invitations || [];
+    },
+    async acceptCoverageInvitation(id) {
+      return request(`/me/coverage-invitations/${id}/accept`, { method: 'POST' });
+    },
+    async declineCoverageInvitation(id) {
+      const payload = await request(`/me/coverage-invitations/${id}/decline`, { method: 'POST' });
+      return payload.invitation;
+    },
+    async getCoordinatorServices(year, month, { signal } = {}) {
+      const query = new URLSearchParams({ year: String(year), month: String(month) });
+      const payload = await request(`/coordinator/services?${query}`, { signal });
+      return payload.services || [];
+    },
+    async getCoverageCandidates(assignmentId, { signal } = {}) {
+      const payload = await request(`/coordinator/assignments/${assignmentId}/coverage-candidates`, { signal });
+      return payload.candidates || [];
+    },
+    async recordCoordinatorContact(assignmentId, data) {
+      const payload = await request(`/coordinator/assignments/${assignmentId}/contact-attempts`, {
+        method: 'POST',
+        body: data
+      });
+      return payload.attempt;
+    },
+    async confirmAssignmentManually(assignmentId) {
+      const payload = await request(`/coordinator/assignments/${assignmentId}/confirm`, { method: 'POST' });
+      return payload.assignment;
+    },
+    async createCoverageRequest(assignmentId, data) {
+      const payload = await request(`/coordinator/assignments/${assignmentId}/coverage-requests`, {
+        method: 'POST',
+        body: data
+      });
+      return payload.coverageRequest;
+    },
+    async getCoverageRequest(id, { signal } = {}) {
+      const payload = await request(`/coordinator/coverage-requests/${id}`, { signal });
+      return payload.coverageRequest;
+    },
+    async addCoverageInvitations(id, candidateIds) {
+      const payload = await request(`/coordinator/coverage-requests/${id}/invitations`, {
+        method: 'POST',
+        body: { candidateIds }
+      });
+      return payload.coverageRequest;
+    },
+    async cancelCoverageRequest(id) {
+      const payload = await request(`/coordinator/coverage-requests/${id}/cancel`, { method: 'POST' });
+      return payload.coverageRequest;
+    },
     async getAdminExchanges({ signal } = {}) {
       const payload = await request('/admin/exchanges', { signal });
       return (payload.exchanges || []).map(normalizeExchange);

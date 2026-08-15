@@ -1,10 +1,20 @@
 // @ts-nocheck -- Legacy compatibility module; migrate types incrementally at typed boundaries.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Bell, CalendarDays, Check, ChevronLeft, ChevronRight, LogOut, Plus, RefreshCw, Send, Trash2, X } from 'lucide-react';
+import { Bell, BellRing, CalendarDays, Check, ChevronLeft, ChevronRight, LogOut, Plus, RefreshCw, Send, Trash2, X } from 'lucide-react';
 import { getCurrentBusinessMonth } from '../domain/catalog';
+import { CoordinatorDashboard } from './CoordinatorDashboard';
 
 const SHIFT_LABELS = { MORNING: 'Manhã', NIGHT: 'Noite', ALL: 'Qualquer turno' };
 const STATUS_LABELS = { PENDING: 'Aguardando resposta', ACCEPTED: 'Aceita', REJECTED: 'Rejeitada', CANCELLED: 'Cancelada' };
+const COVERAGE_STATUS_LABELS = {
+  PENDING: 'Aguardando sua resposta',
+  ACCEPTED: 'Você assumiu esta vaga',
+  DECLINED: 'Você recusou',
+  FILLED_BY_OTHER: 'Atendida por outra pessoa',
+  CANCELLED: 'Cancelada',
+  EXPIRED: 'Expirada',
+  NO_LONGER_ELIGIBLE: 'Você não está mais elegível'
+};
 
 export function VolunteerPortal({ user, api, onLogout, onSessionExpired }) {
   const businessMonth = useMemo(() => getCurrentBusinessMonth(), []);
@@ -14,6 +24,7 @@ export function VolunteerPortal({ user, api, onLogout, onSessionExpired }) {
   const [unavailabilities, setUnavailabilities] = useState([]);
   const [exchanges, setExchanges] = useState([]);
   const [notifications, setNotifications] = useState([]);
+  const [coverageInvitations, setCoverageInvitations] = useState([]);
   const [exchangeCandidates, setExchangeCandidates] = useState([]);
   const [form, setForm] = useState({ date: '', shift: 'ALL', reason: '' });
   const [exchangeForm, setExchangeForm] = useState({ assignmentId: '', targetAssignmentId: '', reason: '' });
@@ -27,17 +38,19 @@ export function VolunteerPortal({ user, api, onLogout, onSessionExpired }) {
     setLoading(true);
     setError('');
     try {
-      const [nextSchedule, nextUnavailabilities, nextExchanges, nextNotifications] = await Promise.all([
+      const [nextSchedule, nextUnavailabilities, nextExchanges, nextNotifications, nextCoverageInvitations] = await Promise.all([
         api.getMySchedule(year, month, { signal }),
         api.getMyUnavailabilities({ signal }),
         api.getMyExchanges({ signal }),
-        api.getMyNotifications({ signal })
+        api.getMyNotifications({ signal }),
+        api.getMyCoverageInvitations({ signal })
       ]);
       if (signal?.aborted || sequence !== loadSequence.current) return;
       setSchedule(nextSchedule);
       setUnavailabilities(nextUnavailabilities);
       setExchanges(nextExchanges);
       setNotifications(nextNotifications);
+      setCoverageInvitations(nextCoverageInvitations);
       setExchangeCandidates([]);
     } catch (nextError) {
       if (nextError.name === 'AbortError' || sequence !== loadSequence.current) return;
@@ -123,6 +136,16 @@ export function VolunteerPortal({ user, api, onLogout, onSessionExpired }) {
       {error && <div className="app-notification error" role="alert"><span>{error}</span></div>}
       {loading ? <div className="app-state"><RefreshCw className="spin" size={28} /><p>Carregando portal…</p></div> : (
         <div className="portal-grid">
+          {user.scopes?.includes('COORDINATOR') && (
+            <CoordinatorDashboard
+              user={user}
+              api={api}
+              year={year}
+              month={month}
+              onSessionExpired={onSessionExpired}
+            />
+          )}
+
           <section className="glass-panel portal-card portal-wide">
             <div className="portal-card-header"><h2><CalendarDays size={19} /> Minha escala</h2><div className="portal-month-selector"><button className="icon-button" onClick={() => changeMonth(-1)} title="Mês anterior"><ChevronLeft size={18} /></button><span>{String(month).padStart(2, '0')}/{year}</span><button className="icon-button" onClick={() => changeMonth(1)} title="Próximo mês"><ChevronRight size={18} /></button></div></div>
             {schedule.length === 0 ? <p className="portal-muted">Você não possui atribuições publicadas neste mês.</p> : (
@@ -137,6 +160,51 @@ export function VolunteerPortal({ user, api, onLogout, onSessionExpired }) {
               </div>
             )}
           </section>
+
+          {coverageInvitations.length > 0 && (
+            <section className="glass-panel portal-card portal-wide coverage-invitations">
+              <div className="portal-card-header">
+                <h2><BellRing size={19} /> Convites para cobertura</h2>
+                <span>{coverageInvitations.filter(item => item.status === 'PENDING').length} aguardando</span>
+              </div>
+              <div className="portal-list">
+                {coverageInvitations.map(invitation => (
+                  <div className="portal-list-row" key={invitation.id}>
+                    <div>
+                      <strong>{invitation.date} · {SHIFT_LABELS[invitation.shift] || invitation.shift} · {invitation.role}</strong>
+                      <span>Solicitado por {invitation.requestedByName} · Motivo: {invitation.reason}</span>
+                      {invitation.status === 'FILLED_BY_OTHER' && (
+                        <small className="coverage-thanks">Obrigado pela disponibilidade e preocupação com a equipe.</small>
+                      )}
+                    </div>
+                    <div className="portal-actions coverage-invitation-actions">
+                      <span className={`portal-tag coverage-${invitation.status.toLowerCase()}`}>
+                        {COVERAGE_STATUS_LABELS[invitation.status] || invitation.status}
+                      </span>
+                      {invitation.status === 'PENDING' && (
+                        <>
+                          <button
+                            className="btn btn-primary btn-compact"
+                            disabled={busy}
+                            onClick={() => run(() => api.acceptCoverageInvitation(invitation.id))}
+                          >
+                            <Check size={15} /> Aceitar
+                          </button>
+                          <button
+                            className="btn btn-secondary btn-compact"
+                            disabled={busy}
+                            onClick={() => run(() => api.declineCoverageInvitation(invitation.id))}
+                          >
+                            <X size={15} /> Não posso
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
 
           <section className="glass-panel portal-card">
             <div className="portal-card-header"><h2><Bell size={19} /> Notificações</h2></div>
