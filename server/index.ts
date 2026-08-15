@@ -71,7 +71,7 @@ import {
   registrationEmailExists,
   updatePendingRegistration
 } from './db/authRepository.js';
-import { requireAuth, requireRole } from './auth.js';
+import { requireAuth, requireRole, requireScope } from './auth.js';
 import {
   deleteSupabaseUser,
   ensureSupabaseUser,
@@ -84,6 +84,7 @@ import {
 } from './supabase.js';
 import { validatePublicRegistration } from './registration.js';
 import { createServiceConfirmationModule } from './serviceConfirmations.js';
+import { createCoverageRequestModule } from './coverageRequests.js';
 import { createSmtpEmailSender } from './email.js';
 
 const PORT = process.env.PORT || 3001;
@@ -272,6 +273,7 @@ export function createApp({
     publicAppUrl,
     tokenSecret: confirmationTokenSecret
   });
+  app.locals.coverageRequests = createCoverageRequestModule({ db, now, timeZone });
 
   app.locals.supabaseBootstrapReady = Promise.resolve(null);
   if (bootstrapAdmin?.password && isSupabaseAuthConfigured() && isSupabaseAdminConfigured()) {
@@ -571,6 +573,108 @@ export function createApp({
 
   app.post('/api/me/notifications/read-all', requireAuth, async (req, res) => {
     res.json({ updated: await markAllNotificationsRead(req.user.id) });
+  });
+
+  function sendCoverageError(res, error) {
+    res.status(error.status || 422).json({
+      error: error.message,
+      code: error.code || 'COVERAGE_REQUEST_FAILED'
+    });
+  }
+
+  app.get('/api/me/coverage-invitations', requireAuth, async (req, res) => {
+    try {
+      res.json({ invitations: await app.locals.coverageRequests.listMyInvitations(req.user) });
+    } catch (error) {
+      sendCoverageError(res, error);
+    }
+  });
+
+  app.post('/api/me/coverage-invitations/:id/accept', requireAuth, async (req, res) => {
+    try {
+      res.json(await app.locals.coverageRequests.acceptInvitation(req.user, Number(req.params.id)));
+    } catch (error) {
+      sendCoverageError(res, error);
+    }
+  });
+
+  app.post('/api/me/coverage-invitations/:id/decline', requireAuth, async (req, res) => {
+    try {
+      res.json({ invitation: await app.locals.coverageRequests.declineInvitation(req.user, Number(req.params.id)) });
+    } catch (error) {
+      sendCoverageError(res, error);
+    }
+  });
+
+  app.get('/api/coordinator/services', requireAuth, requireScope('LEADER', 'COORDINATOR'), async (req, res) => {
+    try {
+      const { year, month } = parseYearMonth(req.query, {
+        defaultYear: now().getFullYear(),
+        defaultMonth: now().getMonth() + 1
+      });
+      res.json({ services: await app.locals.coverageRequests.listManagedServices(req.user, { year, month }) });
+    } catch (error) {
+      sendCoverageError(res, error);
+    }
+  });
+
+  app.get('/api/coordinator/assignments/:id/coverage-candidates', requireAuth, requireScope('LEADER', 'COORDINATOR'), async (req, res) => {
+    try {
+      res.json({ candidates: await app.locals.coverageRequests.listCandidates(req.user, Number(req.params.id)) });
+    } catch (error) {
+      sendCoverageError(res, error);
+    }
+  });
+
+  app.post('/api/coordinator/assignments/:id/contact-attempts', requireAuth, requireScope('LEADER', 'COORDINATOR'), async (req, res) => {
+    try {
+      const attempt = await app.locals.coverageRequests.recordContactAttempt(req.user, Number(req.params.id), req.body || {});
+      res.status(201).json({ attempt });
+    } catch (error) {
+      sendCoverageError(res, error);
+    }
+  });
+
+  app.post('/api/coordinator/assignments/:id/confirm', requireAuth, requireScope('LEADER', 'COORDINATOR'), async (req, res) => {
+    try {
+      res.json({ assignment: await app.locals.coverageRequests.confirmManually(req.user, Number(req.params.id)) });
+    } catch (error) {
+      sendCoverageError(res, error);
+    }
+  });
+
+  app.post('/api/coordinator/assignments/:id/coverage-requests', requireAuth, requireScope('LEADER', 'COORDINATOR'), async (req, res) => {
+    try {
+      const coverageRequest = await app.locals.coverageRequests.createRequest(req.user, Number(req.params.id), req.body || {});
+      res.status(201).json({ coverageRequest });
+    } catch (error) {
+      sendCoverageError(res, error);
+    }
+  });
+
+  app.get('/api/coordinator/coverage-requests/:id', requireAuth, requireScope('LEADER', 'COORDINATOR'), async (req, res) => {
+    try {
+      res.json({ coverageRequest: await app.locals.coverageRequests.getRequest(req.user, Number(req.params.id)) });
+    } catch (error) {
+      sendCoverageError(res, error);
+    }
+  });
+
+  app.post('/api/coordinator/coverage-requests/:id/invitations', requireAuth, requireScope('LEADER', 'COORDINATOR'), async (req, res) => {
+    try {
+      const coverageRequest = await app.locals.coverageRequests.addInvitations(req.user, Number(req.params.id), req.body?.candidateIds);
+      res.status(201).json({ coverageRequest });
+    } catch (error) {
+      sendCoverageError(res, error);
+    }
+  });
+
+  app.post('/api/coordinator/coverage-requests/:id/cancel', requireAuth, requireScope('LEADER', 'COORDINATOR'), async (req, res) => {
+    try {
+      res.json({ coverageRequest: await app.locals.coverageRequests.cancelRequest(req.user, Number(req.params.id)) });
+    } catch (error) {
+      sendCoverageError(res, error);
+    }
   });
 
   app.get('/api/admin/exchanges', requireAuth, requireRole('LEADER'), async (req, res) => {

@@ -419,6 +419,25 @@ export async function createScheduleExchange({ assignmentId, requesterId, target
   if (pendingConflict) throw new Error('One of these assignments already has a pending exchange.');
 
   const exchangeId = await db.transaction(async tx => {
+    const cancelledCoverage = await tx.run(`
+      UPDATE coverage_requests
+      SET status = 'CANCELLED', cancelled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+      WHERE assignment_id = ? AND original_volunteer_id = ? AND status = 'OPEN'
+      RETURNING id
+    `, [assignmentId, requesterId]);
+    if (cancelledCoverage.changes) {
+      await tx.run(`
+        UPDATE coverage_invitations
+        SET status = 'CANCELLED', responded_at = COALESCE(responded_at, CURRENT_TIMESTAMP)
+        WHERE coverage_request_id = ? AND status = 'PENDING'
+      `, [cancelledCoverage.lastInsertRowid]);
+    }
+    const resolvedCoverage = await tx.one(`
+      SELECT status FROM coverage_requests
+      WHERE assignment_id = ? AND original_volunteer_id = ?
+      ORDER BY id DESC LIMIT 1
+    `, [assignmentId, requesterId]);
+    if (resolvedCoverage?.status === 'FILLED') throw new Error('This assignment was already covered by another volunteer.');
     let linkedConfirmationId = confirmationId;
     if (!linkedConfirmationId) {
       await tx.run(`
@@ -542,7 +561,6 @@ export async function acceptScheduleExchange(id, targetVolunteerId, changedByUse
       SET status = 'ACCEPTED', responded_at = CURRENT_TIMESTAMP, completed_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `, [id]);
-
     await tx.run(`
       UPDATE service_confirmations
       SET status = 'SUPERSEDED', superseded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
@@ -688,6 +706,19 @@ export async function reopenSchedule(id) {
       UPDATE schedule_exchanges
       SET status = 'EXPIRED', responded_at = CURRENT_TIMESTAMP, completed_at = CURRENT_TIMESTAMP
       WHERE schedule_id = ? AND status = 'PENDING'
+    `, [id]);
+    await tx.run(`
+      UPDATE coverage_requests
+      SET status = 'EXPIRED', cancelled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+      WHERE schedule_id = ? AND status = 'OPEN'
+    `, [id]);
+    await tx.run(`
+      UPDATE coverage_invitations
+      SET status = 'EXPIRED', responded_at = COALESCE(responded_at, CURRENT_TIMESTAMP)
+      WHERE coverage_request_id IN (
+        SELECT request.id FROM coverage_requests request
+        WHERE request.schedule_id = ? AND request.status = 'EXPIRED'
+      ) AND status = 'PENDING'
     `, [id]);
     await tx.run('UPDATE schedules SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [SCHEDULE_STATUS.DRAFT, id]);
     return true;

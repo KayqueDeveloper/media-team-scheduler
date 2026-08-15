@@ -103,3 +103,16 @@ export function requireRole(...roles) {
     return next();
   };
 }
+
+export function requireScope(...scopes) {
+  return (req, res, next) => {
+    const granted = new Set(req.user?.scopes || []);
+    if (!req.user || !scopes.some(scope => granted.has(scope))) {
+      return res.status(403).json({
+        error: 'You do not have permission for this resource.',
+        code: 'FORBIDDEN'
+      });
+    }
+    return next();
+  };
+}

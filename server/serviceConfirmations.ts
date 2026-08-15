@@ -55,7 +55,8 @@ function publicConfirmation(row) {
     volunteerName: row.volunteer_name,
     reminderCount: Number(row.reminder_count) || 0,
     lastReminderOn: row.last_reminder_on || null,
-    respondedAt: row.responded_at || null
+    respondedAt: row.responded_at || null,
+    confirmationSource: row.confirmation_source || null
   };
 }
 
@@ -308,11 +309,48 @@ export function createServiceConfirmationModule({
       error.code = 'EXCHANGE_PENDING';
       throw error;
     }
-    await db.run(`
-      UPDATE service_confirmations
-      SET status = 'CONFIRMED', responded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ? AND status IN ('AWAITING', 'CONFIRMED')
-    `, [id]);
+    await db.transaction(async tx => {
+      const cancelledCoverage = await tx.run(`
+        UPDATE coverage_requests
+        SET status = 'CANCELLED', cancelled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE assignment_id = ? AND original_volunteer_id = ? AND status = 'OPEN'
+        RETURNING id
+      `, [current.assignment_id, current.volunteer_id]);
+      if (cancelledCoverage.changes) {
+        await tx.run(`
+          UPDATE coverage_invitations
+          SET status = 'CANCELLED', responded_at = COALESCE(responded_at, CURRENT_TIMESTAMP)
+          WHERE coverage_request_id = ? AND status = 'PENDING'
+        `, [cancelledCoverage.lastInsertRowid]);
+      }
+      const resolvedCoverage = await tx.one(`
+        SELECT status FROM coverage_requests
+        WHERE assignment_id = ? AND original_volunteer_id = ?
+        ORDER BY id DESC LIMIT 1
+      `, [current.assignment_id, current.volunteer_id]);
+      if (resolvedCoverage?.status === 'FILLED') {
+        const error = new Error('Esta alocação já foi coberta por outra pessoa.');
+        error.code = 'COVERAGE_ALREADY_FILLED';
+        throw error;
+      }
+      const updated = await tx.run(`
+        UPDATE service_confirmations
+        SET status = 'CONFIRMED', responded_at = CURRENT_TIMESTAMP,
+          confirmation_source = 'VOLUNTEER', confirmed_by_user_id = NULL,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND status IN ('AWAITING', 'CONFIRMED')
+          AND EXISTS (
+            SELECT 1 FROM assignments current_assignment
+            WHERE current_assignment.id = service_confirmations.assignment_id
+              AND current_assignment.volunteer_id = service_confirmations.volunteer_id
+          )
+      `, [id]);
+      if (!updated.changes) {
+        const error = new Error('Esta alocação mudou e não pode mais ser confirmada.');
+        error.code = 'ASSIGNMENT_CHANGED';
+        throw error;
+      }
+    });
     return publicConfirmation(await getCurrentById(id));
   }
 

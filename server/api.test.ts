@@ -26,9 +26,18 @@ async function createHttpFixture(options = {}) {
       async getUser(token) {
         const prefix = 'test-token:';
         const email = token.startsWith(prefix) ? token.slice(prefix.length) : '';
-        const registeredUser = [...authUsers.values()].find(user => user.email === email);
+        const registeredUser = [...authUsers.values()].find((user) => user.email === email);
         return email
-          ? { data: { user: registeredUser || { id: `supabase-${email}`, email, email_confirmed_at: '2026-01-01T00:00:00Z' } }, error: null }
+          ? {
+              data: {
+                user: registeredUser || {
+                  id: `supabase-${email}`,
+                  email,
+                  email_confirmed_at: '2026-01-01T00:00:00Z'
+                }
+              },
+              error: null
+            }
           : { data: { user: null }, error: new Error('Invalid test token.') };
       },
       async signUp({ email, options: signupOptions }) {
@@ -98,27 +107,41 @@ async function createHttpFixture(options = {}) {
     return { status: response.status, body: payload };
   }
 
+  async function requestAs(email, method, pathname, body) {
+    const headers = {
+      authorization: `Bearer test-token:${email}`,
+      ...(body === undefined ? {} : { 'content-type': 'application/json' })
+    };
+    const response = await fetch(`http://127.0.0.1:${port}${pathname}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body)
+    });
+    const payload = response.status === 204 ? null : await response.json();
+    return { status: response.status, body: payload };
+  }
+
   async function loginAs(email) {
     authToken = `test-token:${email}`;
   }
 
   function confirmEmail(email) {
-    const user = [...authUsers.values()].find(item => item.email === email.toLowerCase());
+    const user = [...authUsers.values()].find((item) => item.email === email.toLowerCase());
     if (!user) throw new Error(`Auth user not found for ${email}`);
     user.email_confirmed_at = '2026-06-20T12:30:00Z';
   }
 
   function hasAuthUser(email) {
-    return [...authUsers.values()].some(user => user.email === email.toLowerCase());
+    return [...authUsers.values()].some((user) => user.email === email.toLowerCase());
   }
 
   async function cleanup() {
-    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     await app.locals.closeDatabase();
     if (ownsDirectory) await rm(directory, { recursive: true, force: true });
   }
 
-  return { request, requestUnauthenticated, loginAs, confirmEmail, hasAuthUser, cleanup };
+  return { request, requestUnauthenticated, requestAs, loginAs, confirmEmail, hasAuthUser, cleanup };
 }
 
 async function createPublishedConfirmationFixture({ now, emailSender }) {
@@ -162,10 +185,16 @@ async function createPublishedConfirmationFixture({ now, emailSender }) {
     confirmedWarnings: true
   });
   assert.equal(published.status, 200);
-  return { fixture, scheduleId, morning: morning.body, night: night.body, assignments: published.body.assignments };
+  return {
+    fixture,
+    scheduleId,
+    morning: morning.body,
+    night: night.body,
+    assignments: published.body.assignments
+  };
 }
 
-test('HTTP API enforces authentication and leader authorization', async t => {
+test('HTTP API enforces authentication and leader authorization', async (t) => {
   const fixture = await createHttpFixture();
   t.after(fixture.cleanup);
 
@@ -178,7 +207,10 @@ test('HTTP API enforces authentication and leader authorization', async t => {
   });
   assert.equal(legacyLogin.status, 404);
 
-  const volunteer = await fixture.request('POST', '/api/volunteers', { name: 'Voluntário com conta', email: 'volunteer@test.local' });
+  const volunteer = await fixture.request('POST', '/api/volunteers', {
+    name: 'Voluntário com conta',
+    email: 'volunteer@test.local'
+  });
   const account = await fixture.request('POST', '/api/admin/users', {
     name: 'Voluntário com conta',
     email: 'volunteer@test.local',
@@ -196,10 +228,9 @@ test('HTTP API enforces authentication and leader authorization', async t => {
   const me = await fixture.request('GET', '/api/auth/me');
   assert.equal(me.status, 200);
   assert.equal(me.body.user.volunteerId, volunteer.body.id);
-
 });
 
-test('public registration requires email confirmation and leader approval before portal access', async t => {
+test('public registration requires email confirmation and leader approval before portal access', async (t) => {
   const fixture = await createHttpFixture();
   t.after(fixture.cleanup);
 
@@ -264,7 +295,7 @@ test('public registration requires email confirmation and leader approval before
   assert.equal(me.body.user.name, 'Voluntária Aprovada');
 });
 
-test('rejecting a pending registration deletes Auth and local records and frees the email', async t => {
+test('rejecting a pending registration deletes Auth and local records and frees the email', async (t) => {
   const fixture = await createHttpFixture();
   t.after(fixture.cleanup);
 
@@ -274,21 +305,33 @@ test('rejecting a pending registration deletes Auth and local records and frees 
     phone: '(11) 99999-1111',
     password: 'senha-segura'
   };
-  assert.equal((await fixture.requestUnauthenticated('POST', '/api/auth/register', registrationInput)).status, 201);
+  assert.equal(
+    (await fixture.requestUnauthenticated('POST', '/api/auth/register', registrationInput)).status,
+    201
+  );
   fixture.confirmEmail(registrationInput.email);
 
   const pending = await fixture.request('GET', '/api/admin/registrations');
   assert.equal(pending.body.registrations.length, 1);
-  const rejected = await fixture.request('DELETE', `/api/admin/registrations/${pending.body.registrations[0].id}`);
+  const rejected = await fixture.request(
+    'DELETE',
+    `/api/admin/registrations/${pending.body.registrations[0].id}`
+  );
   assert.equal(rejected.status, 204);
   assert.equal(fixture.hasAuthUser(registrationInput.email), false);
 
   const volunteers = await fixture.request('GET', '/api/volunteers');
-  assert.equal(volunteers.body.some(volunteer => volunteer.email === registrationInput.email), false);
-  assert.equal((await fixture.requestUnauthenticated('POST', '/api/auth/register', registrationInput)).status, 201);
+  assert.equal(
+    volunteers.body.some((volunteer) => volunteer.email === registrationInput.email),
+    false
+  );
+  assert.equal(
+    (await fixture.requestUnauthenticated('POST', '/api/auth/register', registrationInput)).status,
+    201
+  );
 });
 
-test('volunteer API isolates personal data and applies an accepted exchange as a new publication version', async t => {
+test('volunteer API isolates personal data and applies an accepted exchange as a new publication version', async (t) => {
   const fixture = await createHttpFixture();
   t.after(fixture.cleanup);
 
@@ -303,12 +346,18 @@ test('volunteer API isolates personal data and applies an accepted exchange as a
     proficiencies: { VMIX: 2 }
   });
   await fixture.request('POST', '/api/admin/users', {
-    name: 'Solicitante', email: 'requester@test.local', password: 'requester-password',
-    role: 'VOLUNTEER', volunteerId: requester.body.id
+    name: 'Solicitante',
+    email: 'requester@test.local',
+    password: 'requester-password',
+    role: 'VOLUNTEER',
+    volunteerId: requester.body.id
   });
   await fixture.request('POST', '/api/admin/users', {
-    name: 'Substituto', email: 'target@test.local', password: 'target-password',
-    role: 'VOLUNTEER', volunteerId: target.body.id
+    name: 'Substituto',
+    email: 'target@test.local',
+    password: 'target-password',
+    role: 'VOLUNTEER',
+    volunteerId: target.body.id
   });
 
   const generated = await fixture.request('POST', '/api/schedule/generate', { year: 2026, month: 7 });
@@ -326,8 +375,12 @@ test('volunteer API isolates personal data and applies an accepted exchange as a
     confirmedWarnings: true
   });
   assert.equal(published.status, 200);
-  const assignmentId = published.body.assignments.find(item => item.volunteer_id === requester.body.id && item.role === 'VMIX').id;
-  const targetAssignmentId = published.body.assignments.find(item => item.volunteer_id === target.body.id && item.role === 'VMIX').id;
+  const assignmentId = published.body.assignments.find(
+    (item) => item.volunteer_id === requester.body.id && item.role === 'VMIX'
+  ).id;
+  const targetAssignmentId = published.body.assignments.find(
+    (item) => item.volunteer_id === target.body.id && item.role === 'VMIX'
+  ).id;
 
   await fixture.loginAs('requester@test.local');
   const personalSchedule = await fixture.request('GET', '/api/me/schedule?year=2026&month=7');
@@ -373,15 +426,21 @@ test('volunteer API isolates personal data and applies an accepted exchange as a
   const versions = await fixture.request('GET', `/api/schedule/${scheduleId}/versions`);
   assert.equal(versions.status, 200);
   assert.equal(versions.body.length, 2);
-  assert.equal(versions.body[0].assignments.find(item => item.id === assignmentId).volunteer_id, requester.body.id);
-  assert.equal(versions.body[1].assignments.find(item => item.id === assignmentId).volunteer_id, target.body.id);
+  assert.equal(
+    versions.body[0].assignments.find((item) => item.id === assignmentId).volunteer_id,
+    requester.body.id
+  );
+  assert.equal(
+    versions.body[1].assignments.find((item) => item.id === assignmentId).volunteer_id,
+    target.body.id
+  );
 
   await fixture.loginAs('requester@test.local');
   const requesterNotifications = await fixture.request('GET', '/api/me/notifications');
   assert.equal(requesterNotifications.body.notifications[0].type, 'EXCHANGE_ACCEPTED');
 });
 
-test('daily reminders cover both shifts, deduplicate each day and stop after confirmation', async t => {
+test('daily reminders cover both shifts, deduplicate each day and stop after confirmation', async (t) => {
   let currentTime = new Date('2026-08-13T12:00:00Z');
   const deliveries = [];
   const emailSender = {
@@ -394,27 +453,33 @@ test('daily reminders cover both shifts, deduplicate each day and stop after con
       return { id: `email-${deliveries.length}` };
     }
   };
-  const { fixture, scheduleId } = await createPublishedConfirmationFixture({ now: () => currentTime, emailSender });
+  const { fixture, scheduleId } = await createPublishedConfirmationFixture({
+    now: () => currentTime,
+    emailSender
+  });
   t.after(fixture.cleanup);
 
   const firstRun = await fixture.request('POST', '/api/admin/service-confirmations/dispatch');
   assert.equal(firstRun.status, 200);
   assert.equal(firstRun.body.sent, 2);
-  assert.deepEqual(deliveries.map(item => item.shift).sort(), ['MORNING', 'NIGHT']);
+  assert.deepEqual(deliveries.map((item) => item.shift).sort(), ['MORNING', 'NIGHT']);
 
   const duplicateRun = await fixture.request('POST', '/api/admin/service-confirmations/dispatch');
   assert.equal(duplicateRun.status, 200);
   assert.equal(duplicateRun.body.sent, 0);
   assert.equal(deliveries.length, 2);
 
-  const confirmationUrl = new URL(deliveries.find(item => item.shift === 'MORNING').confirmationUrl);
+  const confirmationUrl = new URL(deliveries.find((item) => item.shift === 'MORNING').confirmationUrl);
   const token = confirmationUrl.searchParams.get('token');
   const details = await fixture.requestUnauthenticated('GET', `/api/service-confirmations/${token}`);
   assert.equal(details.status, 200);
   assert.equal(details.body.confirmation.shift, 'MORNING');
   assert.equal(details.body.confirmation.status, 'AWAITING');
 
-  const confirmed = await fixture.requestUnauthenticated('POST', `/api/service-confirmations/${token}/confirm`);
+  const confirmed = await fixture.requestUnauthenticated(
+    'POST',
+    `/api/service-confirmations/${token}/confirm`
+  );
   assert.equal(confirmed.status, 200);
   assert.equal(confirmed.body.confirmation.status, 'CONFIRMED');
 
@@ -427,17 +492,20 @@ test('daily reminders cover both shifts, deduplicate each day and stop after con
 
   const administrative = await fixture.request('GET', '/api/admin/service-confirmations?year=2026&month=8');
   assert.equal(administrative.status, 200);
-  assert.deepEqual(administrative.body.confirmations.map(item => item.status).sort(), ['AWAITING', 'CONFIRMED']);
+  assert.deepEqual(administrative.body.confirmations.map((item) => item.status).sort(), [
+    'AWAITING',
+    'CONFIRMED'
+  ]);
 
   const reopened = await fixture.request('POST', `/api/schedule/${scheduleId}/reopen`);
   assert.equal(reopened.status, 200);
   const staleLink = await fixture.requestUnauthenticated('GET', `/api/service-confirmations/${token}`);
   assert.equal(staleLink.status, 404);
   const superseded = await fixture.request('GET', '/api/admin/service-confirmations?year=2026&month=8');
-  assert.ok(superseded.body.confirmations.every(item => item.status === 'SUPERSEDED'));
+  assert.ok(superseded.body.confirmations.every((item) => item.status === 'SUPERSEDED'));
 });
 
-test('a failed email remains eligible for retry on the same day', async t => {
+test('a failed email remains eligible for retry on the same day', async (t) => {
   let attempts = 0;
   const deliveries = [];
   const emailSender = {
@@ -472,7 +540,7 @@ test('a failed email remains eligible for retry on the same day', async t => {
   assert.equal(completed.body.sent, 0);
 });
 
-test('a pending exchange expires after either assignment date passes', async t => {
+test('a pending exchange expires after either assignment date passes', async (t) => {
   let currentTime = new Date('2026-08-13T12:00:00Z');
   const deliveries = [];
   const emailSender = {
@@ -491,21 +559,28 @@ test('a pending exchange expires after either assignment date passes', async t =
   t.after(fixture.cleanup);
 
   await fixture.request('POST', '/api/admin/service-confirmations/dispatch');
-  const morningDelivery = deliveries.find(item => item.shift === 'MORNING');
+  const morningDelivery = deliveries.find((item) => item.shift === 'MORNING');
   const token = new URL(morningDelivery.confirmationUrl).searchParams.get('token');
-  const morningAssignment = assignments.find(item => item.shift === 'MORNING');
-  const nightAssignment = assignments.find(item => item.shift === 'NIGHT');
-  const requested = await fixture.requestUnauthenticated('POST', `/api/service-confirmations/${token}/exchange`, {
-    targetAssignmentId: nightAssignment.id,
-    reason: 'Preciso trocar este turno.'
-  });
+  const morningAssignment = assignments.find((item) => item.shift === 'MORNING');
+  const nightAssignment = assignments.find((item) => item.shift === 'NIGHT');
+  const requested = await fixture.requestUnauthenticated(
+    'POST',
+    `/api/service-confirmations/${token}/exchange`,
+    {
+      targetAssignmentId: nightAssignment.id,
+      reason: 'Preciso trocar este turno.'
+    }
+  );
   assert.equal(requested.status, 201);
 
   currentTime = new Date('2026-08-17T12:00:00Z');
   const expiredRun = await fixture.request('POST', '/api/admin/service-confirmations/dispatch');
   assert.equal(expiredRun.status, 200);
   assert.equal(expiredRun.body.sent, 0);
-  assert.equal((await fixture.requestUnauthenticated('GET', `/api/service-confirmations/${token}`)).status, 404);
+  assert.equal(
+    (await fixture.requestUnauthenticated('GET', `/api/service-confirmations/${token}`)).status,
+    404
+  );
 
   await fixture.loginAs('night@test.local');
   const acceptance = await fixture.request('POST', `/api/exchanges/${requested.body.exchange.id}/accept`);
@@ -515,7 +590,7 @@ test('a pending exchange expires after either assignment date passes', async t =
   assert.equal(exchanges.body.exchanges[0].assignmentId, morningAssignment.id);
 });
 
-test('confirmation flow requires a reason and swaps two published assignments after acceptance', async t => {
+test('confirmation flow requires a reason and swaps two published assignments after acceptance', async (t) => {
   let currentTime = new Date('2026-08-13T12:00:00Z');
   const deliveries = [];
   const emailSender = {
@@ -537,10 +612,14 @@ test('confirmation flow requires a reason and swaps two published assignments af
   t.after(fixture.cleanup);
 
   const requester = await fixture.request('POST', '/api/volunteers', {
-    name: 'Solicitante', email: 'requester-swap@test.local', proficiencies: { VMIX: 2 }
+    name: 'Solicitante',
+    email: 'requester-swap@test.local',
+    proficiencies: { VMIX: 2 }
   });
   const target = await fixture.request('POST', '/api/volunteers', {
-    name: 'Destinatária', email: 'target-swap@test.local', proficiencies: { VMIX: 2 }
+    name: 'Destinatária',
+    email: 'target-swap@test.local',
+    proficiencies: { VMIX: 2 }
   });
   for (const volunteer of [requester.body, target.body]) {
     await fixture.request('POST', '/api/admin/users', {
@@ -561,27 +640,42 @@ test('confirmation flow requires a reason and swaps two published assignments af
     ],
     lockedSlots: []
   });
-  const published = await fixture.request('POST', `/api/schedule/${scheduleId}/publish`, { confirmedWarnings: true });
-  const requesterAssignment = published.body.assignments.find(item => item.volunteer_id === requester.body.id);
-  const targetAssignment = published.body.assignments.find(item => item.volunteer_id === target.body.id);
+  const published = await fixture.request('POST', `/api/schedule/${scheduleId}/publish`, {
+    confirmedWarnings: true
+  });
+  const requesterAssignment = published.body.assignments.find(
+    (item) => item.volunteer_id === requester.body.id
+  );
+  const targetAssignment = published.body.assignments.find((item) => item.volunteer_id === target.body.id);
 
   await fixture.request('POST', '/api/admin/service-confirmations/dispatch');
   const token = new URL(deliveries[0].confirmationUrl).searchParams.get('token');
   const details = await fixture.requestUnauthenticated('GET', `/api/service-confirmations/${token}`);
   assert.equal(details.status, 200);
-  assert.deepEqual(details.body.candidates.map(item => item.assignmentId), [targetAssignment.id]);
+  assert.deepEqual(
+    details.body.candidates.map((item) => item.assignmentId),
+    [targetAssignment.id]
+  );
 
-  const missingReason = await fixture.requestUnauthenticated('POST', `/api/service-confirmations/${token}/exchange`, {
-    targetAssignmentId: targetAssignment.id,
-    reason: '   '
-  });
+  const missingReason = await fixture.requestUnauthenticated(
+    'POST',
+    `/api/service-confirmations/${token}/exchange`,
+    {
+      targetAssignmentId: targetAssignment.id,
+      reason: '   '
+    }
+  );
   assert.equal(missingReason.status, 422);
   assert.equal(missingReason.body.code, 'EXCHANGE_REASON_REQUIRED');
 
-  const requested = await fixture.requestUnauthenticated('POST', `/api/service-confirmations/${token}/exchange`, {
-    targetAssignmentId: targetAssignment.id,
-    reason: 'Estarei viajando pela manhã.'
-  });
+  const requested = await fixture.requestUnauthenticated(
+    'POST',
+    `/api/service-confirmations/${token}/exchange`,
+    {
+      targetAssignmentId: targetAssignment.id,
+      reason: 'Estarei viajando pela manhã.'
+    }
+  );
   assert.equal(requested.status, 201);
   assert.equal(requested.body.exchange.status, 'PENDING');
   assert.equal(requested.body.exchange.targetAssignmentId, targetAssignment.id);
@@ -608,10 +702,14 @@ test('confirmation flow requires a reason and swaps two published assignments af
   assert.equal(deliveries.at(-1).kind, 'CONFIRMATION');
   assert.equal(deliveries.at(-1).to, requester.body.email);
 
-  const requestedAgain = await fixture.requestUnauthenticated('POST', `/api/service-confirmations/${token}/exchange`, {
-    targetAssignmentId: targetAssignment.id,
-    reason: 'Estarei viajando pela manhã.'
-  });
+  const requestedAgain = await fixture.requestUnauthenticated(
+    'POST',
+    `/api/service-confirmations/${token}/exchange`,
+    {
+      targetAssignmentId: targetAssignment.id,
+      reason: 'Estarei viajando pela manhã.'
+    }
+  );
   assert.equal(requestedAgain.status, 201);
 
   await fixture.loginAs(target.body.email);
@@ -635,10 +733,260 @@ test('confirmation flow requires a reason and swaps two published assignments af
 
   await fixture.loginAs('leader@test.local');
   const confirmations = await fixture.request('GET', '/api/admin/service-confirmations?year=2026&month=8');
-  assert.equal(confirmations.body.confirmations.filter(item => item.status === 'CONFIRMED').length, 2);
+  assert.equal(confirmations.body.confirmations.filter((item) => item.status === 'CONFIRMED').length, 2);
 });
 
-test('HTTP API preserves administrative data after a server restart', async t => {
+test('N1 coordinator manages only their service and the first coverage acceptance fills the assignment', async (t) => {
+  let currentTime = new Date('2026-08-13T12:00:00Z');
+  const fixture = await createHttpFixture({ now: () => currentTime });
+  t.after(fixture.cleanup);
+
+  const volunteers = {};
+  for (const input of [
+    {
+      key: 'coordinatorMain',
+      name: 'Coordenadora principal',
+      email: 'coord-main@test.local',
+      proficiencies: { COORDINATOR: 3 }
+    },
+    {
+      key: 'coordinatorN1',
+      name: 'Coordenador N1',
+      email: 'coord-n1@test.local',
+      proficiencies: { COORDINATOR: 1 }
+    },
+    { key: 'absentVmix', name: 'Ausente vMix', email: 'absent-vmix@test.local', proficiencies: { VMIX: 2 } },
+    {
+      key: 'absentFixed',
+      name: 'Ausente câmera',
+      email: 'absent-fixed@test.local',
+      proficiencies: { FIXED_CAM: 2 }
+    },
+    { key: 'candidateA', name: 'Candidata A', email: 'candidate-a@test.local', proficiencies: { VMIX: 2 } },
+    { key: 'candidateB', name: 'Candidato B', email: 'candidate-b@test.local', proficiencies: { VMIX: 3 } },
+    {
+      key: 'fixedCandidate',
+      name: 'Candidata câmera',
+      email: 'candidate-fixed@test.local',
+      proficiencies: { FIXED_CAM: 2 }
+    },
+    {
+      key: 'nightVolunteer',
+      name: 'Voluntário da noite',
+      email: 'night-only@test.local',
+      proficiencies: { VMIX: 2 }
+    }
+  ]) {
+    const created = await fixture.request('POST', '/api/volunteers', input);
+    volunteers[input.key] = created.body;
+    await fixture.request('POST', '/api/admin/users', {
+      name: input.name,
+      email: input.email,
+      password: 'volunteer-password',
+      role: 'VOLUNTEER',
+      volunteerId: created.body.id
+    });
+  }
+
+  const generated = await fixture.request('POST', '/api/schedule/generate', { year: 2026, month: 8 });
+  const scheduleId = generated.body.schedule.id;
+  await fixture.request('PUT', `/api/schedule/${scheduleId}`, {
+    assignments: [
+      {
+        date: '2026-08-16',
+        shift: 'MORNING',
+        role: 'COORDINATOR',
+        volunteerId: volunteers.coordinatorMain.id
+      },
+      {
+        date: '2026-08-16',
+        shift: 'MORNING',
+        role: 'COORDINATOR',
+        volunteerId: volunteers.coordinatorN1.id,
+        isTrainee: true
+      },
+      { date: '2026-08-16', shift: 'MORNING', role: 'VMIX', volunteerId: volunteers.absentVmix.id },
+      { date: '2026-08-16', shift: 'MORNING', role: 'FIXED_CAM', volunteerId: volunteers.absentFixed.id },
+      { date: '2026-08-16', shift: 'NIGHT', role: 'VMIX', volunteerId: volunteers.nightVolunteer.id }
+    ],
+    lockedSlots: []
+  });
+  const published = await fixture.request('POST', `/api/schedule/${scheduleId}/publish`, {
+    confirmedWarnings: true
+  });
+  assert.equal(published.status, 200);
+  const vmixAssignment = published.body.assignments.find(
+    (item) => item.role === 'VMIX' && item.shift === 'MORNING'
+  );
+  const fixedAssignment = published.body.assignments.find((item) => item.role === 'FIXED_CAM');
+  const nightAssignment = published.body.assignments.find(
+    (item) => item.role === 'VMIX' && item.shift === 'NIGHT'
+  );
+
+  await fixture.loginAs('coord-n1@test.local');
+  const me = await fixture.request('GET', '/api/auth/me');
+  assert.deepEqual(me.body.user.scopes, ['COORDINATOR']);
+  const services = await fixture.request('GET', '/api/coordinator/services?year=2026&month=8');
+  assert.equal(services.status, 200);
+  assert.equal(services.body.services.length, 1);
+  assert.equal(services.body.services[0].shift, 'MORNING');
+  assert.deepEqual(services.body.services[0].team.map((item) => item.role).sort(), [
+    'COORDINATOR',
+    'COORDINATOR',
+    'FIXED_CAM',
+    'VMIX'
+  ]);
+
+  const forbidden = await fixture.requestAs(
+    'candidate-a@test.local',
+    'GET',
+    '/api/coordinator/services?year=2026&month=8'
+  );
+  assert.equal(forbidden.status, 403);
+
+  const contact = await fixture.request(
+    'POST',
+    `/api/coordinator/assignments/${fixedAssignment.id}/contact-attempts`,
+    {
+      channel: 'WHATSAPP',
+      note: 'Mensagem enviada e ainda sem resposta.'
+    }
+  );
+  assert.equal(contact.status, 201);
+
+  const manualCoverage = await fixture.request(
+    'POST',
+    `/api/coordinator/assignments/${fixedAssignment.id}/coverage-requests`,
+    {
+      reason: 'Não respondeu aos contatos.',
+      candidateIds: [volunteers.fixedCandidate.id]
+    }
+  );
+  assert.equal(manualCoverage.status, 201);
+  const manualConfirmation = await fixture.request(
+    'POST',
+    `/api/coordinator/assignments/${fixedAssignment.id}/confirm`
+  );
+  assert.equal(manualConfirmation.status, 200);
+  const cancelledCoverage = await fixture.request(
+    'GET',
+    `/api/coordinator/coverage-requests/${manualCoverage.body.coverageRequest.id}`
+  );
+  assert.equal(cancelledCoverage.body.coverageRequest.status, 'CANCELLED');
+  assert.equal(cancelledCoverage.body.coverageRequest.invitations[0].status, 'CANCELLED');
+
+  const candidates = await fixture.request(
+    'GET',
+    `/api/coordinator/assignments/${vmixAssignment.id}/coverage-candidates`
+  );
+  assert.equal(candidates.status, 200);
+  assert.deepEqual(
+    candidates.body.candidates.map((item) => item.id).sort((a, b) => a - b),
+    [volunteers.candidateA.id, volunteers.candidateB.id].sort((a, b) => a - b)
+  );
+  const opened = await fixture.request(
+    'POST',
+    `/api/coordinator/assignments/${vmixAssignment.id}/coverage-requests`,
+    {
+      reason: 'Voluntário não respondeu e não solicitou troca.',
+      candidateIds: [volunteers.candidateA.id, volunteers.candidateB.id]
+    }
+  );
+  assert.equal(opened.status, 201);
+  assert.equal(opened.body.coverageRequest.openedEarly, true);
+  const invitations = opened.body.coverageRequest.invitations;
+  const invitationA = invitations.find((item) => item.volunteerId === volunteers.candidateA.id);
+  const invitationB = invitations.find((item) => item.volunteerId === volunteers.candidateB.id);
+
+  const [acceptA, acceptB] = await Promise.all([
+    fixture.requestAs(
+      'candidate-a@test.local',
+      'POST',
+      `/api/me/coverage-invitations/${invitationA.id}/accept`
+    ),
+    fixture.requestAs(
+      'candidate-b@test.local',
+      'POST',
+      `/api/me/coverage-invitations/${invitationB.id}/accept`
+    )
+  ]);
+  assert.equal(acceptA.status, 200);
+  assert.equal(acceptB.status, 200);
+  assert.equal(Number(Boolean(acceptA.body.won)) + Number(Boolean(acceptB.body.won)), 1);
+  const winner = acceptA.body.won ? volunteers.candidateA : volunteers.candidateB;
+  const loser = acceptA.body.won ? volunteers.candidateB : volunteers.candidateA;
+  const loserEmail = acceptA.body.won ? 'candidate-b@test.local' : 'candidate-a@test.local';
+
+  const resolved = await fixture.request(
+    'GET',
+    `/api/coordinator/coverage-requests/${opened.body.coverageRequest.id}`
+  );
+  assert.equal(resolved.body.coverageRequest.status, 'FILLED');
+  assert.equal(resolved.body.coverageRequest.winnerVolunteerId, winner.id);
+  assert.equal(
+    resolved.body.coverageRequest.invitations.filter((item) => item.status === 'ACCEPTED').length,
+    1
+  );
+  assert.equal(
+    resolved.body.coverageRequest.invitations.filter((item) => item.status === 'FILLED_BY_OTHER').length,
+    1
+  );
+
+  const winnerSchedule = await fixture.requestAs(winner.email, 'GET', '/api/me/schedule?year=2026&month=8');
+  assert.equal(
+    winnerSchedule.body.assignments.some((item) => item.id === vmixAssignment.id),
+    true
+  );
+  const loserNotifications = await fixture.requestAs(loserEmail, 'GET', '/api/me/notifications');
+  assert.equal(
+    loserNotifications.body.notifications.some((item) => item.type === 'COVERAGE_FILLED'),
+    true
+  );
+
+  await fixture.loginAs('leader@test.local');
+  const versions = await fixture.request('GET', `/api/schedule/${scheduleId}/versions`);
+  assert.equal(versions.body.length, 2);
+  assert.equal(
+    versions.body[1].assignments.find((item) => item.id === vmixAssignment.id).volunteer_id,
+    winner.id
+  );
+
+  const expiringCoverage = await fixture.request(
+    'POST',
+    `/api/coordinator/assignments/${nightAssignment.id}/coverage-requests`,
+    {
+      reason: 'Sem retorno para o culto da noite.',
+      candidateIds: [loser.id]
+    }
+  );
+  assert.equal(expiringCoverage.status, 201);
+  currentTime = new Date('2026-08-17T12:00:00Z');
+  const expiredAcceptance = await fixture.requestAs(
+    loserEmail,
+    'POST',
+    `/api/me/coverage-invitations/${expiringCoverage.body.coverageRequest.invitations[0].id}/accept`
+  );
+  assert.equal(expiredAcceptance.status, 409);
+  assert.equal(expiredAcceptance.body.code, 'COVERAGE_EXPIRED');
+  await fixture.loginAs('leader@test.local');
+  const expiredCoverage = await fixture.request(
+    'GET',
+    `/api/coordinator/coverage-requests/${expiringCoverage.body.coverageRequest.id}`
+  );
+  assert.equal(expiredCoverage.body.coverageRequest.status, 'EXPIRED');
+  assert.equal(expiredCoverage.body.coverageRequest.invitations[0].status, 'EXPIRED');
+
+  await fixture.request('PUT', `/api/volunteers/${volunteers.coordinatorN1.id}/proficiencies`, {
+    proficiencies: { COORDINATOR: 0 }
+  });
+
+  await fixture.loginAs('coord-n1@test.local');
+  const revoked = await fixture.request('GET', '/api/auth/me');
+  assert.deepEqual(revoked.body.user.scopes, []);
+  assert.equal((await fixture.request('GET', '/api/coordinator/services?year=2026&month=8')).status, 403);
+});
+
+test('HTTP API preserves administrative data after a server restart', async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'media-scheduler-restart-'));
   const databasePath = path.join(directory, 'persistent.sqlite');
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -660,7 +1008,7 @@ test('HTTP API preserves administrative data after a server restart', async t =>
   assert.deepEqual(volunteers.body[0].proficiencies, { VMIX: 2 });
 });
 
-test('HTTP API updates and archives a volunteer without deleting its history', async t => {
+test('HTTP API updates and archives a volunteer without deleting its history', async (t) => {
   const fixture = await createHttpFixture();
   t.after(fixture.cleanup);
 
@@ -699,7 +1047,7 @@ test('HTTP API updates and archives a volunteer without deleting its history', a
   assert.deepEqual(activeVolunteers.body, []);
 });
 
-test('HTTP API replaces and removes proficiencies through volunteer resources', async t => {
+test('HTTP API replaces and removes proficiencies through volunteer resources', async (t) => {
   const fixture = await createHttpFixture();
   t.after(fixture.cleanup);
 
@@ -724,7 +1072,7 @@ test('HTTP API replaces and removes proficiencies through volunteer resources', 
   assert.equal(invalid.status, 400);
 });
 
-test('HTTP API accepts an unavailability through day 25 and rejects it afterwards', async t => {
+test('HTTP API accepts an unavailability through day 25 and rejects it afterwards', async (t) => {
   let currentTime = new Date('2026-06-25T23:59:59Z');
   const fixture = await createHttpFixture({ now: () => currentTime });
   t.after(fixture.cleanup);
@@ -755,13 +1103,16 @@ test('HTTP API accepts an unavailability through day 25 and rejects it afterward
   assert.equal(rejected.body.code, 'UNAVAILABILITY_CUTOFF_PASSED');
   assert.equal(rejected.body.details.cutoffDate, '2026-06-25');
 
-  const listed = await fixture.request('GET', `/api/unavailabilities?volunteerId=${volunteer.body.id}&year=2026&month=7`);
+  const listed = await fixture.request(
+    'GET',
+    `/api/unavailabilities?volunteerId=${volunteer.body.id}&year=2026&month=7`
+  );
   assert.equal(listed.status, 200);
   assert.equal(listed.body.length, 1);
   assert.equal(listed.body[0].reason, 'Viagem confirmada');
 });
 
-test('HTTP API persists a draft and preserves immutable publication versions', async t => {
+test('HTTP API persists a draft and preserves immutable publication versions', async (t) => {
   const fixture = await createHttpFixture();
   t.after(fixture.cleanup);
 
@@ -785,13 +1136,15 @@ test('HTTP API persists a draft and preserves immutable publication versions', a
 
   const scheduleId = generated.body.schedule.id;
   const invalid = await fixture.request('PUT', `/api/schedule/${scheduleId}`, {
-    assignments: [{
-      date: '2026-07-05',
-      shift: 'MORNING',
-      role: 'VMIX',
-      volunteerId: trainee.body.id,
-      isTrainee: false
-    }],
+    assignments: [
+      {
+        date: '2026-07-05',
+        shift: 'MORNING',
+        role: 'VMIX',
+        volunteerId: trainee.body.id,
+        isTrainee: false
+      }
+    ],
     lockedSlots: []
   });
   assert.equal(invalid.status, 422);
@@ -877,7 +1230,7 @@ test('HTTP API persists a draft and preserves immutable publication versions', a
   assert.equal(versions.body[1].assignments[0].volunteer_name, 'Mentora N3 Renomeada');
 });
 
-test('HTTP API validates Supabase access tokens before resolving the local profile', async t => {
+test('HTTP API validates Supabase access tokens before resolving the local profile', async (t) => {
   const fixture = await createHttpFixture({
     supabaseAuthClient: {
       auth: {
