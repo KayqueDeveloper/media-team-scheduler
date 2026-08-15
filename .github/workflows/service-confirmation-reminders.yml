@@ -1,0 +1,61 @@
+name: Lembretes de confirmação da escala
+
+on:
+  schedule:
+    # 09:17 UTC = 06:17 em America/Sao_Paulo. Evita o horário de pico da hora cheia.
+    - cron: '17 9 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: service-confirmation-reminders
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  send-reminders:
+    name: Enviar lembretes pendentes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      SMTP_HOST: smtp.gmail.com
+      SMTP_PORT: '465'
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASS: ${{ secrets.SMTP_PASS }}
+      EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+      PUBLIC_APP_URL: ${{ secrets.PUBLIC_APP_URL }}
+      APP_TIME_ZONE: America/Sao_Paulo
+      CONFIRMATION_TOKEN_SECRET: ${{ secrets.CONFIRMATION_TOKEN_SECRET }}
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Validar configuração
+        shell: bash
+        run: |
+          required=(DATABASE_URL SMTP_USER SMTP_PASS EMAIL_FROM PUBLIC_APP_URL CONFIRMATION_TOKEN_SECRET)
+          missing=()
+          for name in "${required[@]}"; do
+            if [[ -z "${!name}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if (( ${#missing[@]} > 0 )); then
+            echo "Secrets ausentes: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Enviar lembretes
+        run: npm run reminders:send
