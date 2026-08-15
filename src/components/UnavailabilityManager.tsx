@@ -1,16 +1,7 @@
 // @ts-nocheck -- Legacy compatibility module; migrate types incrementally at typed boundaries.
 import React, { useEffect, useState } from 'react';
-import { 
-  Clock, 
-  Calendar, 
-  Plus, 
-  Trash2, 
-  AlertCircle, 
-  UserX,
-  Sun,
-  Moon,
-  CheckCircle2
-} from 'lucide-react';
+import { Clock, Calendar, Plus, Trash2, AlertCircle, UserX, Sun, Moon, CheckCircle2 } from 'lucide-react';
+import { Modal } from './Modal';
 
 export const UnavailabilityManager = ({
   unavailabilities,
@@ -59,12 +50,12 @@ export const UnavailabilityManager = ({
     if (shiftId === 'ALL' || shiftId === 'todos') return 'Ambos os Turnos';
     if (shiftId === 'MORNING' || shiftId === 'manha') return 'Manhã';
     if (shiftId === 'NIGHT' || shiftId === 'noite') return 'Noite';
-    const s = shifts.find(item => item.id === shiftId);
+    const s = shifts.find((item) => item.id === shiftId);
     return s ? s.name : shiftId;
   };
 
   const getSundayFormatted = (dateStr) => {
-    const s = sundays.find(item => item.date === dateStr);
+    const s = sundays.find((item) => item.date === dateStr);
     return s ? `${s.formatted} (${s.label})` : dateStr;
   };
 
@@ -73,7 +64,10 @@ export const UnavailabilityManager = ({
       <div className="manager-toolbar">
         <div>
           <h2>Bloqueios e Registo de Indisponibilidades</h2>
-          <p>Solicitações de bloqueio de datas e turnos enviadas pelos voluntários antes do fechamento da escala.</p>
+          <p>
+            Solicitações de bloqueio de datas e turnos enviadas pelos voluntários antes do fechamento da
+            escala.
+          </p>
         </div>
 
         <button className="btn btn-primary" onClick={() => setIsAddModalOpen(true)} disabled={disabled}>
@@ -87,7 +81,8 @@ export const UnavailabilityManager = ({
         <div>
           <strong>Política de Prazo Limite (Data de Corte):</strong>
           <span style={{ display: 'block', fontSize: '0.82rem', marginTop: 2 }}>
-            As indisponibilidades devem ser enviadas impreterivelmente até o dia 25 do mês anterior para consideração no gerador de escala.
+            As indisponibilidades devem ser enviadas impreterivelmente até o dia 25 do mês anterior para
+            consideração no gerador de escala.
           </span>
         </div>
       </div>
@@ -99,7 +94,7 @@ export const UnavailabilityManager = ({
             <p>Nenhuma indisponibilidade cadastrada para este mês.</p>
           </div>
         ) : (
-          unavailabilities.map(unavail => {
+          unavailabilities.map((unavail) => {
             const vol = volunteersMap[unavail.volunteerId];
             return (
               <div key={unavail.id} className="unavail-item">
@@ -108,10 +103,10 @@ export const UnavailabilityManager = ({
                     {vol ? vol.name.charAt(0) : '?'}
                   </div>
                   <div>
-                    <strong style={{ fontSize: '0.95rem' }}>{vol ? vol.name : 'Voluntário Desconhecido'}</strong>
-                    <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                      Motivo: {unavail.reason}
-                    </p>
+                    <strong style={{ fontSize: '0.95rem' }}>
+                      {vol ? vol.name : 'Voluntário Desconhecido'}
+                    </strong>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Motivo: {unavail.reason}</p>
                   </div>
                 </div>
 
@@ -121,7 +116,7 @@ export const UnavailabilityManager = ({
                     {getSundayFormatted(unavail.date)} - Turno {getShiftName(unavail.shift)}
                   </span>
 
-                  <button 
+                  <button
                     className="btn btn-danger"
                     onClick={() => onRemoveUnavailability(unavail.id)}
                     disabled={disabled}
@@ -139,78 +134,87 @@ export const UnavailabilityManager = ({
 
       {/* Modal Add Unavailability */}
       {isAddModalOpen && (
-        <div className="modal-overlay" role="presentation">
-          <div className="modal-content" role="dialog" aria-modal="true" aria-labelledby="unavailability-modal-title">
-            <div className="modal-header">
-              <h3 id="unavailability-modal-title">Registrar Indisponibilidade</h3>
-              <button type="button" className="close-btn" aria-label="Fechar diálogo" onClick={() => setIsAddModalOpen(false)}>✕</button>
-            </div>
-            <form onSubmit={handleCreateUnavailability}>
-              <div className="form-group">
-                <label>Voluntário</label>
-                <select 
-                  className="form-select"
-                  value={selectedVolId}
-                  onChange={(e) => setSelectedVolId(e.target.value)}
-                  required
-                >
-                  <option value="">-- Selecione o Voluntário --</option>
-                  {volunteers.map(v => (
-                    <option key={v.id} value={v.id}>{v.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label>Domingo Indisponível</label>
-                <select 
-                  className="form-select"
-                  value={selectedDate}
-                  onChange={(e) => setSelectedDate(e.target.value)}
-                  required
-                >
-                  {sundays.map(s => (
-                    <option key={s.date} value={s.date}>{s.formatted} ({s.label})</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label>Turno Impossibilitado</label>
-                <select 
-                  className="form-select"
-                  value={selectedShift}
-                  onChange={(e) => setSelectedShift(e.target.value)}
-                  required
-                >
-                  <option value="MORNING">Turno Manhã (09h00)</option>
-                  <option value="NIGHT">Turno Noite (18h00)</option>
-                  <option value="ALL">Ambos os Turnos (Dia Inteiro)</option>
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label>Justificativa / Motivo (Opcional)</label>
-                <input 
-                  type="text" 
-                  className="form-input" 
-                  placeholder="Ex: Viagem, compromisso acadêmico, trabalho"
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                />
-              </div>
-
-              <div className="modal-actions">
-                <button type="button" className="btn btn-outline" onClick={() => setIsAddModalOpen(false)}>
-                  Cancelar
-                </button>
-                <button type="submit" className="btn btn-primary" disabled={disabled}>
-                  Confirmar Indisponibilidade
-                </button>
-              </div>
-            </form>
+        <Modal ariaLabelledBy="unavailability-modal-title" onClose={() => setIsAddModalOpen(false)}>
+          <div className="modal-header">
+            <h3 id="unavailability-modal-title">Registrar Indisponibilidade</h3>
+            <button
+              type="button"
+              className="close-btn"
+              aria-label="Fechar diálogo"
+              onClick={() => setIsAddModalOpen(false)}
+            >
+              ✕
+            </button>
           </div>
-        </div>
+          <form onSubmit={handleCreateUnavailability}>
+            <div className="form-group">
+              <label>Voluntário</label>
+              <select
+                className="form-select"
+                value={selectedVolId}
+                onChange={(e) => setSelectedVolId(e.target.value)}
+                required
+              >
+                <option value="">-- Selecione o Voluntário --</option>
+                {volunteers.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label>Domingo Indisponível</label>
+              <select
+                className="form-select"
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                required
+              >
+                {sundays.map((s) => (
+                  <option key={s.date} value={s.date}>
+                    {s.formatted} ({s.label})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label>Turno Impossibilitado</label>
+              <select
+                className="form-select"
+                value={selectedShift}
+                onChange={(e) => setSelectedShift(e.target.value)}
+                required
+              >
+                <option value="MORNING">Turno Manhã (09h00)</option>
+                <option value="NIGHT">Turno Noite (18h00)</option>
+                <option value="ALL">Ambos os Turnos (Dia Inteiro)</option>
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label>Justificativa / Motivo (Opcional)</label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="Ex: Viagem, compromisso acadêmico, trabalho"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+              />
+            </div>
+
+            <div className="modal-actions">
+              <button type="button" className="btn btn-outline" onClick={() => setIsAddModalOpen(false)}>
+                Cancelar
+              </button>
+              <button type="submit" className="btn btn-primary" disabled={disabled}>
+                Confirmar Indisponibilidade
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
     </section>
   );

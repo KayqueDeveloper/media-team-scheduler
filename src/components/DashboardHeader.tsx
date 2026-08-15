@@ -1,20 +1,21 @@
 // @ts-nocheck -- Legacy compatibility module; migrate types incrementally at typed boundaries.
 import React from 'react';
-import { 
-  Calendar, 
-  ChevronLeft, 
-  ChevronRight, 
-  Sparkles, 
-  Download, 
-  Users, 
-  Clock, 
-  CheckCircle2, 
+import {
+  Calendar,
+  ChevronLeft,
+  ChevronRight,
+  Sparkles,
+  Download,
+  Users,
+  Clock,
+  CheckCircle2,
   AlertCircle,
   Printer,
   Grid,
   ArrowLeftRight,
   UserCheck,
-  BellRing
+  BellRing,
+  MoreHorizontal
 } from 'lucide-react';
 
 export const DashboardHeader = ({
@@ -58,9 +59,9 @@ export const DashboardHeader = ({
         <div className="header-controls">
           {/* Month Selector */}
           <div className="month-selector">
-            <button 
-              className="month-btn" 
-              onClick={() => onMonthChange(-1)} 
+            <button
+              className="month-btn"
+              onClick={() => onMonthChange(-1)}
               title="Mês Anterior"
               aria-label="Mês anterior"
               disabled={disabled}
@@ -68,9 +69,9 @@ export const DashboardHeader = ({
               <ChevronLeft size={18} />
             </button>
             <span className="month-display">{currentMonth}</span>
-            <button 
-              className="month-btn" 
-              onClick={() => onMonthChange(1)} 
+            <button
+              className="month-btn"
+              onClick={() => onMonthChange(1)}
               title="Próximo Mês"
               aria-label="Próximo mês"
               disabled={disabled}
@@ -82,34 +83,79 @@ export const DashboardHeader = ({
           {/* Status Badge & Toggle Button */}
           <button
             type="button"
-            className={`status-badge ${status}`} 
+            className={`status-badge ${status}`}
             onClick={onToggleStatus}
             disabled={disabled || (!hasSchedule && status === 'draft')}
             title={status === 'draft' ? 'Publicar a escala' : 'Reabrir a escala para edição'}
+            aria-label={status === 'draft' ? 'Rascunho · Publicar' : 'Publicada · Reabrir'}
           >
             <span className="status-dot"></span>
             {status === 'draft' ? (
-              <><AlertCircle size={14} /> {busyAction === 'publishing' ? 'Publicando…' : 'Rascunho · Publicar'}</>
+              <>
+                <AlertCircle size={14} />
+                <span className="status-label-desktop">
+                  {busyAction === 'publishing' ? 'Publicando…' : 'Rascunho · Publicar'}
+                </span>
+                <span className="status-label-mobile">
+                  {busyAction === 'publishing' ? 'Publicando…' : 'Rascunho'}
+                </span>
+              </>
             ) : (
               <>
-                <CheckCircle2 size={14} /> {busyAction === 'reopening' ? 'Reabrindo…' : 'Publicada · Reabrir'}
+                <CheckCircle2 size={14} />
+                <span className="status-label-desktop">
+                  {busyAction === 'reopening' ? 'Reabrindo…' : 'Publicada · Reabrir'}
+                </span>
+                <span className="status-label-mobile">
+                  {busyAction === 'reopening' ? 'Reabrindo…' : 'Publicada'}
+                </span>
               </>
             )}
           </button>
 
           {/* Action Buttons */}
-          <button className="btn btn-secondary" onClick={onGenerateAuto} disabled={disabled || status === 'published'}>
+          <button
+            className="btn btn-secondary desktop-header-action"
+            onClick={onGenerateAuto}
+            disabled={disabled || status === 'published'}
+          >
             <Sparkles size={16} />
             {busyAction === 'generating' ? 'Gerando…' : 'Gerar automaticamente'}
           </button>
 
-          <button className="btn btn-primary" onClick={onOpenPdfModal} disabled={disabled}>
+          <button
+            className="btn btn-primary desktop-header-action"
+            onClick={onOpenPdfModal}
+            disabled={disabled}
+          >
             <Download size={16} />
             Exportação PDF
           </button>
-          <button className="btn btn-secondary" onClick={onLogout} disabled={disabled}>
+          <button className="btn btn-secondary desktop-header-action" onClick={onLogout} disabled={disabled}>
             Sair
           </button>
+
+          <details className="mobile-header-actions">
+            <summary>
+              <MoreHorizontal size={18} /> Ações
+            </summary>
+            <div className="mobile-header-actions-menu">
+              <button
+                className="btn btn-secondary"
+                onClick={onGenerateAuto}
+                disabled={disabled || status === 'published'}
+              >
+                <Sparkles size={16} />
+                {busyAction === 'generating' ? 'Gerando…' : 'Gerar automaticamente'}
+              </button>
+              <button className="btn btn-primary" onClick={onOpenPdfModal} disabled={disabled}>
+                <Download size={16} /> Exportação PDF
+              </button>
+              <button className="btn btn-secondary" onClick={onLogout} disabled={disabled}>
+                Sair
+              </button>
+            </div>
+          </details>
         </div>
       </div>
 
@@ -118,12 +164,14 @@ export const DashboardHeader = ({
         <span>Seção do painel</span>
         <select
           value={activeTab}
-          onChange={event => onTabChange(event.target.value)}
+          onChange={(event) => onTabChange(event.target.value)}
           disabled={disabled}
           aria-label="Seção do painel"
         >
           {Object.entries(sectionLabels).map(([value, label]) => (
-            <option key={value} value={value}>{label}</option>
+            <option key={value} value={value}>
+              {label}
+            </option>
           ))}
         </select>
       </label>
