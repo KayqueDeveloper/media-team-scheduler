@@ -40,6 +40,22 @@ export const SHIFTS: readonly ShiftOption[] = SHIFT_IDS.map((id) => ({
   time: id === 'MORNING' ? '09h00' : '18h00'
 }));
 
+export function getRoleLabel(roleId: string): string {
+  return ROLES.find((role) => role.id === roleId)?.name ?? roleId;
+}
+
+export function getShiftLabel(shiftId: string): string {
+  return SHIFTS.find((shift) => shift.id === shiftId)?.name ?? shiftId;
+}
+
+export function formatScheduleDate(date: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!match) return date;
+  const [, year, month, day] = match;
+  if (!year || !month || !day) return date;
+  return `${day}/${month}/${year}`;
+}
+
 export const MONTH_NAMES = [
   'Janeiro',
   'Fevereiro',

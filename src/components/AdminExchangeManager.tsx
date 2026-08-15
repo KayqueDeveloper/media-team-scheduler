@@ -1,6 +1,7 @@
 // @ts-nocheck -- Legacy compatibility module; migrate types incrementally at typed boundaries.
 import React from 'react';
 import { ArrowLeftRight, CheckCircle2, Clock3, XCircle } from 'lucide-react';
+import { formatScheduleDate, getShiftLabel } from '../domain/catalog';
 
 const labels = { PENDING: 'Pendente', ACCEPTED: 'Aceita', REJECTED: 'Rejeitada', CANCELLED: 'Cancelada' };
 
@@ -8,22 +9,42 @@ export function AdminExchangeManager({ exchanges = [] }) {
   return (
     <section className="glass-panel admin-exchanges">
       <div className="portal-card-header">
-        <h2><ArrowLeftRight size={19} /> Acompanhamento de trocas</h2>
-        <span>{exchanges.filter(item => item.status === 'PENDING').length} pendente(s)</span>
+        <h2>
+          <ArrowLeftRight size={19} /> Acompanhamento de trocas
+        </h2>
+        <span>{exchanges.filter((item) => item.status === 'PENDING').length} pendente(s)</span>
       </div>
-      {exchanges.length === 0 ? <p className="portal-muted">Nenhuma troca registrada.</p> : (
+      {exchanges.length === 0 ? (
+        <p className="portal-muted">Nenhuma troca registrada.</p>
+      ) : (
         <div className="portal-list">
-          {exchanges.map(exchange => {
-            const Icon = exchange.status === 'ACCEPTED' ? CheckCircle2 : exchange.status === 'REJECTED' || exchange.status === 'CANCELLED' ? XCircle : Clock3;
-            return <div className="portal-list-row" key={exchange.id}>
-              <div>
-                <strong>{exchange.date} · {exchange.shift} ↔ {exchange.targetDate} · {exchange.targetShift}</strong>
-                <span>{exchange.requesterName} ↔ {exchange.targetVolunteerName}</span>
-                {exchange.reason && <small className="portal-muted">Motivo: {exchange.reason}</small>}
-                {exchange.last_error && <small className="confirmation-error">Falha no envio: {exchange.last_error}</small>}
+          {exchanges.map((exchange) => {
+            const Icon =
+              exchange.status === 'ACCEPTED'
+                ? CheckCircle2
+                : exchange.status === 'REJECTED' || exchange.status === 'CANCELLED'
+                  ? XCircle
+                  : Clock3;
+            return (
+              <div className="portal-list-row" key={exchange.id}>
+                <div>
+                  <strong>
+                    {formatScheduleDate(exchange.date)} · {getShiftLabel(exchange.shift)} ↔{' '}
+                    {formatScheduleDate(exchange.targetDate)} · {getShiftLabel(exchange.targetShift)}
+                  </strong>
+                  <span>
+                    {exchange.requesterName} ↔ {exchange.targetVolunteerName}
+                  </span>
+                  {exchange.reason && <small className="portal-muted">Motivo: {exchange.reason}</small>}
+                  {exchange.last_error && (
+                    <small className="confirmation-error">Falha no envio: {exchange.last_error}</small>
+                  )}
+                </div>
+                <span className={`portal-tag status-${exchange.status.toLowerCase()}`}>
+                  <Icon size={14} /> {labels[exchange.status] || exchange.status}
+                </span>
               </div>
-              <span className={`portal-tag status-${exchange.status.toLowerCase()}`}><Icon size={14} /> {labels[exchange.status] || exchange.status}</span>
-            </div>;
+            );
           })}
         </div>
       )}
