@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true
+  },
+  "files": ["vitest.config.ts"],
+  "references": [
+    { "path": "./apps/api/tsconfig.build.json" },
+    { "path": "./packages/contracts/tsconfig.build.json" },
+    { "path": "./packages/scheduling-domain/tsconfig.build.json" }
+  ]
+}

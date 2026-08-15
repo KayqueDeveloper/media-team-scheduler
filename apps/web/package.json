@@ -1,0 +1,14 @@
+{
+  "name": "@media-scheduler/web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@media-scheduler/contracts": "1.0.0",
+    "@media-scheduler/scheduling-domain": "1.0.0",
+    "@tanstack/react-query": "*",
+    "react": "*",
+    "react-dom": "*",
+    "react-router-dom": "*"
+  }
+}

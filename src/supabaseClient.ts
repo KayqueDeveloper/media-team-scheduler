@@ -1,0 +1,19 @@
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = import.meta.env?.VITE_SUPABASE_URL;
+const supabasePublishableKey = import.meta.env?.VITE_SUPABASE_PUBLISHABLE_KEY;
+
+export const supabaseConfigured = Boolean(supabaseUrl && supabasePublishableKey);
+
+// The publishable key is intentionally the only key shipped to the browser.
+// It is safe to expose because authorization is enforced by Supabase Auth and
+// by the API's protected routes, not by the key itself.
+export const supabase = supabaseUrl && supabasePublishableKey
+  ? createClient(supabaseUrl, supabasePublishableKey, {
+      auth: {
+        autoRefreshToken: true,
+        persistSession: true,
+        detectSessionInUrl: true
+      }
+    })
+  : null;
