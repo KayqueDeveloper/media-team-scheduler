@@ -13,9 +13,9 @@ export function VolunteerPortal({ user, api, onLogout, onSessionExpired }) {
   const [unavailabilities, setUnavailabilities] = useState([]);
   const [exchanges, setExchanges] = useState([]);
   const [notifications, setNotifications] = useState([]);
-  const [directory, setDirectory] = useState([]);
+  const [exchangeCandidates, setExchangeCandidates] = useState([]);
   const [form, setForm] = useState({ date: '', shift: 'ALL', reason: '' });
-  const [exchangeForm, setExchangeForm] = useState({ assignmentId: '', targetVolunteerId: '', reason: '' });
+  const [exchangeForm, setExchangeForm] = useState({ assignmentId: '', targetAssignmentId: '', reason: '' });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -26,19 +26,18 @@ export function VolunteerPortal({ user, api, onLogout, onSessionExpired }) {
     setLoading(true);
     setError('');
     try {
-      const [nextSchedule, nextUnavailabilities, nextExchanges, nextNotifications, nextDirectory] = await Promise.all([
+      const [nextSchedule, nextUnavailabilities, nextExchanges, nextNotifications] = await Promise.all([
         api.getMySchedule(year, month, { signal }),
         api.getMyUnavailabilities({ signal }),
         api.getMyExchanges({ signal }),
-        api.getMyNotifications({ signal }),
-        api.getVolunteerDirectory({ signal })
+        api.getMyNotifications({ signal })
       ]);
       if (signal?.aborted || sequence !== loadSequence.current) return;
       setSchedule(nextSchedule);
       setUnavailabilities(nextUnavailabilities);
       setExchanges(nextExchanges);
       setNotifications(nextNotifications);
-      setDirectory(nextDirectory.filter(item => String(item.id) !== String(user.volunteerId)));
+      setExchangeCandidates([]);
     } catch (nextError) {
       if (nextError.name === 'AbortError' || sequence !== loadSequence.current) return;
       if (nextError.status === 401) {
@@ -90,7 +89,23 @@ export function VolunteerPortal({ user, api, onLogout, onSessionExpired }) {
 
   function requestExchange(event) {
     event.preventDefault();
-    return run(() => api.createExchange(exchangeForm));
+    return run(async () => {
+      await api.createExchange(exchangeForm);
+      setExchangeForm({ assignmentId: '', targetAssignmentId: '', reason: '' });
+      setExchangeCandidates([]);
+    });
+  }
+
+  async function selectExchangeAssignment(assignmentId) {
+    setExchangeForm({ assignmentId, targetAssignmentId: '', reason: exchangeForm.reason });
+    setError('');
+    if (!assignmentId) return setExchangeCandidates([]);
+    try {
+      setExchangeCandidates(await api.getExchangeCandidates(assignmentId));
+    } catch (nextError) {
+      setExchangeCandidates([]);
+      setError(nextError.message);
+    }
   }
 
   return (
@@ -113,7 +128,10 @@ export function VolunteerPortal({ user, api, onLogout, onSessionExpired }) {
               <div className="portal-list">
                 {schedule.map(item => <div className="portal-list-row" key={item.id}>
                   <div><strong>{item.date}</strong><span>{SHIFT_LABELS[item.shift] || item.shift} · {item.role}</span></div>
-                  <span className={item.isTrainee ? 'portal-tag trainee' : 'portal-tag'}>{item.isTrainee ? 'Treinando' : 'Principal'}</span>
+                  <div className="portal-actions">
+                    {item.confirmation_status && <span className={`portal-tag confirmation-${item.confirmation_status.toLowerCase()}`}>{item.confirmation_status === 'CONFIRMED' ? 'Confirmado' : item.confirmation_status === 'EXCHANGE_PENDING' ? 'Troca pendente' : 'Aguardando confirmação'}</span>}
+                    <span className={item.isTrainee ? 'portal-tag trainee' : 'portal-tag'}>{item.isTrainee ? 'Treinando' : 'Principal'}</span>
+                  </div>
                 </div>)}
               </div>
             )}
@@ -142,12 +160,12 @@ export function VolunteerPortal({ user, api, onLogout, onSessionExpired }) {
           <section className="glass-panel portal-card portal-wide">
             <div className="portal-card-header"><h2><Send size={19} /> Solicitar troca</h2></div>
             {schedule.length === 0 ? <p className="portal-muted">Você precisa ter uma atribuição publicada para solicitar troca.</p> : <form className="portal-form exchange-form" onSubmit={requestExchange}>
-              <label>Atribuição<select value={exchangeForm.assignmentId} onChange={event => setExchangeForm({ ...exchangeForm, assignmentId: event.target.value })} required><option value="">Selecione</option>{schedule.map(item => <option key={item.id} value={item.id}>{item.date} · {item.shift} · {item.role}</option>)}</select></label>
-              <label>Destinatário<select value={exchangeForm.targetVolunteerId} onChange={event => setExchangeForm({ ...exchangeForm, targetVolunteerId: event.target.value })} required><option value="">Selecione</option>{directory.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-              <label>Motivo<input value={exchangeForm.reason} onChange={event => setExchangeForm({ ...exchangeForm, reason: event.target.value })} /></label>
+              <label>Minha escala<select value={exchangeForm.assignmentId} onChange={event => selectExchangeAssignment(event.target.value)} required><option value="">Selecione</option>{schedule.map(item => <option key={item.id} value={item.id}>{item.date} · {SHIFT_LABELS[item.shift] || item.shift} · {item.role}</option>)}</select></label>
+              <label>Trocar com<select value={exchangeForm.targetAssignmentId} onChange={event => setExchangeForm({ ...exchangeForm, targetAssignmentId: event.target.value })} required><option value="">Selecione outra escala</option>{exchangeCandidates.map(item => <option key={item.assignmentId} value={item.assignmentId}>{item.volunteerName} · {item.date} · {SHIFT_LABELS[item.shift] || item.shift} · {item.role}</option>)}</select></label>
+              <label>Motivo<input required value={exchangeForm.reason} onChange={event => setExchangeForm({ ...exchangeForm, reason: event.target.value })} /></label>
               <button className="btn btn-primary" disabled={busy}><Send size={16} /> Solicitar</button>
             </form>}
-            <div className="portal-list">{exchanges.map(exchange => <div className="portal-list-row" key={exchange.id}><div><strong>{exchange.date} · {exchange.role}</strong><span>{exchange.requesterName} → {exchange.targetVolunteerName}</span></div><div className="portal-actions"><span className={`portal-tag status-${exchange.status.toLowerCase()}`}>{STATUS_LABELS[exchange.status] || exchange.status}</span>{exchange.status === 'PENDING' && String(exchange.targetVolunteerId) === String(user.volunteerId) && <><button className="icon-button success" onClick={() => run(() => api.acceptExchange(exchange.id))} title="Aceitar"><Check size={16} /></button><button className="icon-button danger" onClick={() => run(() => api.rejectExchange(exchange.id))} title="Rejeitar"><X size={16} /></button></>}{exchange.status === 'PENDING' && String(exchange.requesterId) === String(user.volunteerId) && <button className="icon-button danger" onClick={() => run(() => api.cancelExchange(exchange.id))} title="Cancelar"><X size={16} /></button>}</div></div>)}</div>
+            <div className="portal-list">{exchanges.map(exchange => <div className="portal-list-row" key={exchange.id}><div><strong>{exchange.date} · {SHIFT_LABELS[exchange.shift] || exchange.shift} ↔ {exchange.targetDate} · {SHIFT_LABELS[exchange.targetShift] || exchange.targetShift}</strong><span>{exchange.requesterName} ↔ {exchange.targetVolunteerName}</span>{exchange.reason && <small className="portal-muted">Motivo: {exchange.reason}</small>}</div><div className="portal-actions"><span className={`portal-tag status-${exchange.status.toLowerCase()}`}>{STATUS_LABELS[exchange.status] || exchange.status}</span>{exchange.status === 'PENDING' && String(exchange.targetVolunteerId) === String(user.volunteerId) && <><button className="icon-button success" onClick={() => run(() => api.acceptExchange(exchange.id))} title="Aceitar"><Check size={16} /></button><button className="icon-button danger" onClick={() => run(() => api.rejectExchange(exchange.id))} title="Rejeitar"><X size={16} /></button></>}{exchange.status === 'PENDING' && String(exchange.requesterId) === String(user.volunteerId) && <button className="icon-button danger" onClick={() => run(() => api.cancelExchange(exchange.id))} title="Cancelar"><X size={16} /></button>}</div></div>)}</div>
           </section>
         </div>
       )}

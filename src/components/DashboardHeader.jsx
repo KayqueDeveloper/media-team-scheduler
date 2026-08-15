@@ -12,7 +12,8 @@ import {
   Printer,
   Grid,
   ArrowLeftRight,
-  UserCheck
+  UserCheck,
+  BellRing
 } from 'lucide-react';
 
 export const DashboardHeader = ({
@@ -144,6 +145,15 @@ export const DashboardHeader = ({
         >
           <ArrowLeftRight size={16} />
           Trocas
+        </button>
+
+        <button
+          className={`tab-btn ${activeTab === 'confirmations' ? 'active' : ''}`}
+          onClick={() => onTabChange('confirmations')}
+          disabled={disabled}
+        >
+          <BellRing size={16} />
+          Confirmações
         </button>
 
         <button

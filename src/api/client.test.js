@@ -274,6 +274,45 @@ test('envia o cadastro público sem token e preserva o código de e-mail duplica
   assert.equal(captured.init.headers.has('Authorization'), false);
 });
 
+test('responde à confirmação pública e solicita permuta sem consultar a sessão', async () => {
+  const calls = [];
+  const authClient = {
+    auth: {
+      async getSession() {
+        throw new Error('A confirmação pública não deve consultar a sessão.');
+      }
+    }
+  };
+  const client = createApiClient({
+    authClient,
+    fetchImpl: async (url, init) => {
+      calls.push([url, init.method, init.body ? JSON.parse(init.body) : null]);
+      if (init.method === 'GET') return jsonResponse({
+        confirmation: { id: 4, status: 'AWAITING', shift: 'MORNING' },
+        candidates: [{ assignmentId: 9, volunteerName: 'Bia' }]
+      });
+      if (url.endsWith('/confirm')) return jsonResponse({ confirmation: { id: 4, status: 'CONFIRMED' } });
+      return jsonResponse({ exchange: { id: 8, status: 'PENDING', target_assignment_id: 9 } }, { status: 201 });
+    }
+  });
+
+  const details = await client.getServiceConfirmation('signed-token');
+  const confirmed = await client.confirmService('signed-token');
+  const exchange = await client.requestServiceExchange('signed-token', {
+    targetAssignmentId: 9,
+    reason: 'Viagem'
+  });
+
+  assert.equal(details.candidates[0].assignmentId, '9');
+  assert.equal(confirmed.status, 'CONFIRMED');
+  assert.equal(exchange.targetAssignmentId, '9');
+  assert.deepEqual(calls, [
+    ['/api/service-confirmations/signed-token', 'GET', null],
+    ['/api/service-confirmations/signed-token/confirm', 'POST', null],
+    ['/api/service-confirmations/signed-token/exchange', 'POST', { targetAssignmentId: 9, reason: 'Viagem' }]
+  ]);
+});
+
 test('expõe a fila administrativa e suas ações', async () => {
   const calls = [];
   const client = createApiClient({

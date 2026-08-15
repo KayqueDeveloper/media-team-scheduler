@@ -31,6 +31,7 @@ import {
   getExchangesByVolunteerId,
   getAllScheduleExchanges,
   createScheduleExchange,
+  getExchangeCandidates,
   getExchangeById,
   createNotification,
   getNotificationsByUserId,
@@ -70,6 +71,8 @@ import {
   signUpSupabaseUser
 } from './supabase.js';
 import { validatePublicRegistration } from './registration.js';
+import { createServiceConfirmationModule } from './serviceConfirmations.js';
+import { createSmtpEmailSender } from './email.js';
 
 const PORT = process.env.PORT || 3001;
 
@@ -245,7 +248,10 @@ export function createApp({
   timeZone = 'America/Sao_Paulo',
   bootstrapAdmin,
   supabaseAuthClient = null,
-  supabaseAdminClient = null
+  supabaseAdminClient = null,
+  emailSender = null,
+  publicAppUrl = process.env.PUBLIC_APP_URL || 'http://localhost:3000',
+  confirmationTokenSecret = process.env.CONFIRMATION_TOKEN_SECRET
 } = {}) {
   const app = express();
   const db = getDatabase(dbPath);
@@ -254,6 +260,15 @@ export function createApp({
   app.locals.now = now;
   app.locals.supabaseAuthClient = supabaseAuthClient;
   app.locals.supabaseAdminClient = supabaseAdminClient;
+  const configuredEmailSender = emailSender || createSmtpEmailSender({ publicAppUrl });
+  app.locals.serviceConfirmations = createServiceConfirmationModule({
+    db,
+    now,
+    timeZone,
+    emailSender: configuredEmailSender,
+    publicAppUrl,
+    tokenSecret: confirmationTokenSecret
+  });
 
   app.locals.supabaseBootstrapReady = Promise.resolve(null);
   if (bootstrapAdmin?.password && isSupabaseAuthConfigured() && isSupabaseAdminConfigured()) {
@@ -316,6 +331,56 @@ export function createApp({
       res.json({ status: 'ok' });
     } catch (error) {
       next(error);
+    }
+  });
+
+  app.get('/api/service-confirmations/:token', async (req, res) => {
+    const confirmation = await app.locals.serviceConfirmations.getByToken(req.params.token);
+    if (!confirmation) return res.status(404).json({ error: 'Confirmação inválida ou desatualizada.' });
+    res.json({
+      confirmation,
+      candidates: confirmation.status === 'AWAITING'
+        ? await getExchangeCandidates(confirmation.assignmentId, { currentDate: getCalendarDate(now(), timeZone) })
+        : []
+    });
+  });
+
+  app.post('/api/service-confirmations/:token/confirm', async (req, res) => {
+    try {
+      const confirmation = await app.locals.serviceConfirmations.confirm(req.params.token);
+      if (!confirmation) return res.status(404).json({ error: 'Confirmação inválida ou desatualizada.' });
+      res.json({ confirmation });
+    } catch (error) {
+      res.status(422).json({ error: error.message, code: error.code || 'CONFIRMATION_FAILED' });
+    }
+  });
+
+  app.post('/api/service-confirmations/:token/exchange', async (req, res) => {
+    try {
+      const confirmation = await app.locals.serviceConfirmations.getByToken(req.params.token);
+      if (!confirmation) return res.status(404).json({ error: 'Confirmação inválida ou desatualizada.' });
+      const reason = String(req.body?.reason || '').trim();
+      if (!reason) return res.status(422).json({ error: 'Informe o motivo da solicitação de troca.', code: 'EXCHANGE_REASON_REQUIRED' });
+      const targetAssignmentId = Number(req.body?.targetAssignmentId);
+      if (!Number.isInteger(targetAssignmentId)) return res.status(400).json({ error: 'Selecione a escala desejada.' });
+      const exchange = await createScheduleExchange({
+        assignmentId: confirmation.assignmentId,
+        requesterId: confirmation.volunteerId,
+        targetAssignmentId,
+        reason,
+        confirmationId: confirmation.id,
+        currentDate: getCalendarDate(now(), timeZone)
+      });
+      const targetUserId = await getUserIdByVolunteerId(exchange.targetVolunteerId);
+      if (targetUserId) await createNotification({
+        userId: targetUserId,
+        type: 'EXCHANGE_REQUESTED',
+        exchangeId: exchange.id,
+        message: `${exchange.requesterName} solicitou trocar ${exchange.date} (${exchange.shift}) por ${exchange.targetDate} (${exchange.targetShift}).`
+      });
+      res.status(201).json({ exchange });
+    } catch (error) {
+      res.status(422).json({ error: error.message, code: error.code || 'EXCHANGE_REQUEST_FAILED' });
     }
   });
 
@@ -487,6 +552,22 @@ export function createApp({
     res.json({ exchanges: await getAllScheduleExchanges() });
   });
 
+  app.get('/api/admin/service-confirmations', requireAuth, requireRole('LEADER'), async (req, res) => {
+    const year = req.query.year === undefined ? undefined : Number(req.query.year);
+    const month = req.query.month === undefined ? undefined : Number(req.query.month);
+    if (year !== undefined && !Number.isInteger(year)) return res.status(400).json({ error: 'Ano inválido.' });
+    if (month !== undefined && (!Number.isInteger(month) || month < 1 || month > 12)) return res.status(400).json({ error: 'Mês inválido.' });
+    res.json({ confirmations: await app.locals.serviceConfirmations.listForLeader({ year, month }) });
+  });
+
+  app.post('/api/admin/service-confirmations/dispatch', requireAuth, requireRole('LEADER'), async (req, res) => {
+    try {
+      res.json(await app.locals.serviceConfirmations.dispatchDueReminders());
+    } catch (error) {
+      res.status(503).json({ error: error.message, code: 'EMAIL_DISPATCH_FAILED' });
+    }
+  });
+
   async function syncPendingEmailConfirmations() {
     const adminClient = app.locals.supabaseAdminClient || getSupabaseAdminClient();
     if (!adminClient) return;
@@ -566,10 +647,16 @@ export function createApp({
       const volunteerId = requireVolunteerIdentity(req, res);
       if (!volunteerId) return;
       const assignmentId = Number(req.body?.assignmentId);
-      const targetVolunteerId = Number(req.body?.targetVolunteerId);
-      if (!Number.isInteger(assignmentId) || !Number.isInteger(targetVolunteerId)) return res.status(400).json({ error: 'assignmentId and targetVolunteerId are required.' });
-      const exchange = await createScheduleExchange({ assignmentId, requesterId: volunteerId, targetVolunteerId, reason: req.body.reason || null });
-      const targetUserId = await getUserIdByVolunteerId(targetVolunteerId);
+      const targetAssignmentId = Number(req.body?.targetAssignmentId);
+      if (!Number.isInteger(assignmentId) || !Number.isInteger(targetAssignmentId)) return res.status(400).json({ error: 'assignmentId and targetAssignmentId are required.' });
+      const exchange = await createScheduleExchange({
+        assignmentId,
+        requesterId: volunteerId,
+        targetAssignmentId,
+        reason: req.body.reason,
+        currentDate: getCalendarDate(now(), timeZone)
+      });
+      const targetUserId = await getUserIdByVolunteerId(exchange.targetVolunteerId);
       if (targetUserId) await createNotification({
         userId: targetUserId,
         type: 'EXCHANGE_REQUESTED',
@@ -582,11 +669,23 @@ export function createApp({
     }
   });
 
+  app.get('/api/exchanges/candidates', requireAuth, requireRole('VOLUNTEER'), async (req, res) => {
+    const volunteerId = requireVolunteerIdentity(req, res);
+    if (!volunteerId) return;
+    const assignmentId = Number(req.query.assignmentId);
+    if (!Number.isInteger(assignmentId)) return res.status(400).json({ error: 'assignmentId is required.' });
+    const owned = (await getPublishedAssignmentsByVolunteerId(volunteerId)).some(item => item.id === assignmentId);
+    if (!owned) return res.status(404).json({ error: 'Published assignment not found.' });
+    res.json({ candidates: await getExchangeCandidates(assignmentId, { currentDate: getCalendarDate(now(), timeZone) }) });
+  });
+
   app.post('/api/exchanges/:id/accept', requireAuth, requireRole('VOLUNTEER'), async (req, res) => {
     try {
       const volunteerId = requireVolunteerIdentity(req, res);
       if (!volunteerId) return;
-      res.json({ exchange: await acceptScheduleExchange(Number(req.params.id), volunteerId, req.user.id) });
+      res.json({ exchange: await acceptScheduleExchange(Number(req.params.id), volunteerId, req.user.id, {
+        currentDate: getCalendarDate(now(), timeZone)
+      }) });
     } catch (error) {
       res.status(422).json({ error: error.message });
     }

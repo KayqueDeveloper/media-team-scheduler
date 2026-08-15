@@ -72,6 +72,7 @@ export function normalizeExchange(raw) {
     ...raw,
     id: String(raw.id),
     assignmentId: String(valueFrom(raw, 'assignmentId', 'assignment_id')),
+    targetAssignmentId: String(valueFrom(raw, 'targetAssignmentId', 'target_assignment_id')),
     requesterId: String(valueFrom(raw, 'requesterId', 'requester_id')),
     targetVolunteerId: String(valueFrom(raw, 'targetVolunteerId', 'target_volunteer_id')),
     status: raw.status || 'PENDING',
@@ -256,6 +257,35 @@ export function createApiClient({
   }
 
   return {
+    async getServiceConfirmation(token, { signal } = {}) {
+      const payload = await request(`/service-confirmations/${encodeURIComponent(token)}`, {
+        signal,
+        authenticated: false
+      });
+      return {
+        confirmation: payload.confirmation,
+        candidates: (payload.candidates || []).map(candidate => ({
+          ...candidate,
+          assignmentId: String(valueFrom(candidate, 'assignmentId', 'assignment_id')),
+          volunteerId: String(valueFrom(candidate, 'volunteerId', 'volunteer_id'))
+        }))
+      };
+    },
+    async confirmService(token) {
+      const payload = await request(`/service-confirmations/${encodeURIComponent(token)}/confirm`, {
+        method: 'POST',
+        authenticated: false
+      });
+      return payload.confirmation;
+    },
+    async requestServiceExchange(token, data) {
+      const payload = await request(`/service-confirmations/${encodeURIComponent(token)}/exchange`, {
+        method: 'POST',
+        authenticated: false,
+        body: data
+      });
+      return normalizeExchange(payload.exchange);
+    },
     async register({ name, email, phone, password }) {
       return request('/auth/register', {
         method: 'POST',
@@ -342,6 +372,15 @@ export function createApiClient({
       const payload = await request('/me/exchanges', { signal });
       return (payload.exchanges || []).map(normalizeExchange);
     },
+    async getExchangeCandidates(assignmentId, { signal } = {}) {
+      const query = new URLSearchParams({ assignmentId: String(assignmentId) });
+      const payload = await request(`/exchanges/candidates?${query}`, { signal });
+      return (payload.candidates || []).map(candidate => ({
+        ...candidate,
+        assignmentId: String(valueFrom(candidate, 'assignmentId', 'assignment_id')),
+        volunteerId: String(valueFrom(candidate, 'volunteerId', 'volunteer_id'))
+      }));
+    },
     async createExchange(data) {
       const payload = await request('/exchanges', { method: 'POST', body: data });
       return normalizeExchange(payload.exchange);
@@ -372,6 +411,11 @@ export function createApiClient({
     async getAdminExchanges({ signal } = {}) {
       const payload = await request('/admin/exchanges', { signal });
       return (payload.exchanges || []).map(normalizeExchange);
+    },
+    async getAdminServiceConfirmations(year, month, { signal } = {}) {
+      const query = new URLSearchParams({ year: String(year), month: String(month) });
+      const payload = await request(`/admin/service-confirmations?${query}`, { signal });
+      return payload.confirmations || [];
     },
     async getPendingRegistrations({ signal } = {}) {
       const payload = await request('/admin/registrations', { signal });

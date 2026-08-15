@@ -109,6 +109,11 @@ No Render, configure:
 - `AUTH_BOOTSTRAP_NAME`: nome opcional do perfil inicial
 - `AUTH_BOOTSTRAP_PASSWORD`: opcional; senha para provisionar o usuário inicial no Supabase Auth
 - `AUTH_EMAIL_REDIRECT_TO`: opcional; URL completa para onde o Supabase redireciona após confirmar um novo cadastro
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER` e `SMTP_PASS`: acesso SMTP; para Gmail, use `smtp.gmail.com`, porta `465` e uma senha de app
+- `EMAIL_FROM`: nome e endereço exibidos como remetente; com Gmail, deve usar a mesma conta de `SMTP_USER`
+- `PUBLIC_APP_URL`: origem pública do painel, usada nos links enviados por e-mail
+- `APP_TIME_ZONE`: fuso do calendário dos lembretes; padrão `America/Sao_Paulo`
+- `CONFIRMATION_TOKEN_SECRET`: segredo longo e aleatório usado para assinar os links públicos (obrigatório em produção)
 
 As variáveis `VITE_*` precisam estar configuradas antes do build do Render, pois o Vite as incorpora no bundle público. Nunca use `SUPABASE_SECRET_KEY` com o prefixo `VITE_`.
 
@@ -124,18 +129,31 @@ O comando lê `server/db/database.sqlite` por padrão. Para indicar outro arquiv
 
 O schema do PostgreSQL é criado automaticamente na primeira inicialização da API. Não execute `npm run seed` contra o Supabase de produção: ele limpa e recria os dados.
 
+### Confirmações e lembretes diários
+
+Cada voluntário escalado, de manhã ou à noite, começa a receber e-mails três dias antes do culto. O lembrete é repetido uma vez por dia até ele confirmar a presença ou abrir uma solicitação de troca. A confirmação não pede motivo; a troca exige motivo e a escolha de outra pessoa já escalada, com dia/turno compatível. Enquanto a troca aguarda aceite, o destinatário também recebe um lembrete diário.
+
+Configure um **Cron Job diário** no Render, compartilhando as mesmas variáveis e o mesmo `DATABASE_URL` do serviço web:
+
+```bash
+npm run reminders:send
+```
+
+O comando é idempotente por item e data. Falhas de envio não marcam o lembrete como concluído, permitindo nova tentativa na próxima execução; o painel do líder exibe a última falha registrada.
+
 ## Verificação
 
 ```bash
 npm test
 npm run test:db
+npm run test:e2e
 npm run build
 ```
 
-O conjunto de testes cobre as regras do gerador e os fluxos públicos da API com banco temporário.
+O conjunto de testes cobre as regras do gerador, os fluxos públicos da API com banco temporário e a confirmação/troca no Chromium via Playwright.
 
 ## Escopo
 
-A Fase 1 cobre o painel do líder, persistência, geração e revisão da escala, publicação versionada e exportação. Autenticação, portal do voluntário e trocas pertencem à Fase 2.
+A Fase 1 cobre o painel do líder, persistência, geração e revisão da escala, publicação versionada e exportação. A Fase 2 cobre autenticação, portal do voluntário, confirmações por e-mail e trocas bilaterais.
 
 Consulte [o plano de término da Fase 1](docs/phase-1-termination-plan.md) e os ADRs em `docs/adr/` para as regras de negócio.

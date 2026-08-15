@@ -15,7 +15,8 @@ const TABLES = [
   { name: 'assignments', columns: ['id', 'schedule_id', 'volunteer_id', 'date', 'shift', 'role', 'is_trainee', 'created_at'] },
   { name: 'schedule_versions', columns: ['id', 'schedule_id', 'version', 'assignments', 'warnings', 'published_at'] },
   { name: 'users', columns: ['id', 'volunteer_id', 'name', 'email', 'role', 'active', 'created_at', 'updated_at'] },
-  { name: 'schedule_exchanges', columns: ['id', 'schedule_id', 'assignment_id', 'requester_id', 'target_volunteer_id', 'status', 'reason', 'rejection_reason', 'created_at', 'responded_at', 'completed_at'] },
+  { name: 'service_confirmations', columns: ['id', 'schedule_id', 'assignment_id', 'volunteer_id', 'status', 'last_reminder_on', 'reminder_count', 'provider_message_id', 'last_error', 'responded_at', 'superseded_at', 'created_at', 'updated_at'] },
+  { name: 'schedule_exchanges', columns: ['id', 'schedule_id', 'assignment_id', 'target_assignment_id', 'requester_id', 'target_volunteer_id', 'status', 'reason', 'rejection_reason', 'confirmation_id', 'last_reminder_on', 'last_error', 'created_at', 'responded_at', 'completed_at'] },
   { name: 'schedule_change_events', columns: ['id', 'schedule_id', 'from_version', 'to_version', 'exchange_id', 'assignment_id', 'previous_volunteer_id', 'new_volunteer_id', 'changed_by_user_id', 'created_at'] },
   { name: 'notifications', columns: ['id', 'user_id', 'type', 'exchange_id', 'message', 'read_at', 'created_at'] }
 ];
@@ -25,6 +26,7 @@ async function migrate() {
   const source = new Database(sourcePath, { readonly: true });
   const target = getDatabase();
   await target.ready;
+  const sourceTables = new Set(source.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map(row => row.name));
 
   if (process.env.MIGRATION_REPLACE === 'true') {
     await target.transaction(async tx => {
@@ -34,17 +36,28 @@ async function migrate() {
 
   await target.transaction(async tx => {
     for (const table of TABLES) {
-      const rows = source.prepare(`SELECT ${table.columns.join(', ')} FROM ${table.name}`).all();
+      if (!sourceTables.has(table.name)) {
+        console.log(`Skipped ${table.name}: table does not exist in source database`);
+        continue;
+      }
+      const availableColumns = new Set(source.prepare(`PRAGMA table_info(${table.name})`).all().map(column => column.name));
+      const columns = table.columns.filter(column => availableColumns.has(column));
+      const rows = source.prepare(`SELECT ${columns.join(', ')} FROM ${table.name}`).all();
       for (const row of rows) {
-        const placeholders = table.columns.map(() => '?').join(', ');
+        const placeholders = columns.map(() => '?').join(', ');
         await tx.run(`
-          INSERT INTO ${table.name} (${table.columns.join(', ')})
+          INSERT INTO ${table.name} (${columns.join(', ')})
           VALUES (${placeholders})
           ON CONFLICT (id) DO NOTHING
-        `, table.columns.map(column => row[column] ?? null));
+        `, columns.map(column => row[column] ?? null));
       }
       console.log(`Migrated ${table.name}: ${rows.length} row(s)`);
     }
+    await tx.run(`
+      UPDATE schedule_exchanges
+      SET status = 'EXPIRED', responded_at = CURRENT_TIMESTAMP, completed_at = CURRENT_TIMESTAMP
+      WHERE status = 'PENDING' AND target_assignment_id IS NULL
+    `);
   });
 
   await target.transaction(async tx => {

@@ -31,8 +31,12 @@ _Avoid_: Bloqueio, restrição de agenda, falta
 
 
 **Troca**:
-Solicitação direta entre voluntários para permuta ou substituição de escala. Exige proficiência compatível na função, mas ignora limites de frequência mensal e restrições de domingos consecutivos.
+Solicitação bilateral entre dois voluntários já escalados para permutar seus respectivos dias/turnos. Exige motivo, aceite do destinatário e compatibilidade dos dois voluntários com as novas funções, mas ignora limites de frequência mensal e restrições de domingos consecutivos.
 _Avoid_: Substituição, permuta, repasse
+
+**Confirmação de serviço**:
+Resposta do voluntário a uma escala publicada próxima: confirmar presença sem justificativa ou solicitar uma troca bilateral com motivo obrigatório.
+_Avoid_: Recusa, cancelamento unilateral, confirmação de turno noturno
 
 
 **Publicação**:

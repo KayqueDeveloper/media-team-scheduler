@@ -98,6 +98,17 @@ body {
   border-radius: var(--radius-sm);
 }
 
+.confirmation-card { width: min(100%, 560px); }
+.confirmation-state { display: flex; align-items: center; gap: .65rem; color: var(--text-muted); }
+.confirmation-summary { display: grid; gap: .2rem; padding: 1rem; background: rgba(15, 23, 42, .55); border: 1px solid var(--border-glass); border-radius: var(--radius-sm); }
+.confirmation-summary strong { font-size: 1.1rem; }
+.confirmation-summary span, .confirmation-summary small { color: var(--text-muted); }
+.confirmation-actions { display: grid; grid-template-columns: 1fr 1fr; gap: .65rem; }
+.confirmation-actions .btn { justify-content: center; }
+.confirmation-result { display: flex; align-items: center; gap: .5rem; }
+.confirmation-exchange { border-top: 1px solid var(--border-glass); padding-top: 1rem; }
+.portal-form textarea { width: 100%; min-height: 100px; resize: vertical; padding: .65rem .7rem; color: var(--text-main); background: rgba(15, 23, 42, .75); border: 1px solid var(--border-glass-bright); border-radius: var(--radius-sm); font: inherit; }
+
 .auth-card input:focus {
   outline: 2px solid var(--primary-cyan);
   outline-offset: 1px;
@@ -177,6 +188,10 @@ body {
 .portal-tag.trainee { color: var(--accent-purple); background: rgba(168, 85, 247, .16); }
 .status-pending { color: var(--accent-amber); background: var(--accent-amber-glow); }
 .status-rejected, .status-cancelled { color: var(--accent-rose); background: var(--accent-rose-glow); }
+.confirmation-awaiting, .confirmation-exchange_pending { color: var(--accent-amber); background: var(--accent-amber-glow); }
+.confirmation-confirmed { color: var(--accent-emerald); background: var(--accent-emerald-glow); }
+.confirmation-superseded { color: var(--text-dim); background: rgba(100, 116, 139, .15); }
+.confirmation-error { color: var(--accent-rose); }
 .portal-form { display: grid; gap: .7rem; }
 .portal-form label { display: grid; gap: .3rem; color: var(--text-muted); font-size: .85rem; }
 .portal-form input, .portal-form select { width: 100%; padding: .65rem .7rem; color: var(--text-main); background: rgba(15, 23, 42, .75); border: 1px solid var(--border-glass-bright); border-radius: var(--radius-sm); }
@@ -192,6 +207,7 @@ body {
 
 @media (max-width: 760px) {
   .portal-grid, .exchange-form { grid-template-columns: 1fr; }
+  .confirmation-actions { grid-template-columns: 1fr; }
   .portal-wide { grid-column: span 1; }
   .portal-header { align-items: flex-start; flex-direction: column; }
 }
