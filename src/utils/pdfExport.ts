@@ -1,5 +1,6 @@
 // @ts-nocheck -- Legacy compatibility module; migrate types incrementally at typed boundaries.
 import { getSlotAssignment } from './scheduleUtils.js';
+import { formatVolunteerDisplayName } from '../domain/catalog.js';
 
 /**
  * Downloads the given element HTML as a formatted PDF file using html2pdf.js
@@ -37,27 +38,36 @@ export const exportToPdf = async (elementId, filename = 'escala-transmissao.pdf'
  * Formats schedule data into a clean WhatsApp text message for group sharing
  */
 export const generateWhatsAppText = (schedule, volunteersMap, sundays, roles, monthLabel) => {
+  const getVolunteerName = (volunteerId, fallback) => {
+    const name = volunteersMap[volunteerId]?.name;
+    return name ? formatVolunteerDisplayName(name) : fallback;
+  };
   let text = `*ESCALA DE TRANSMISSÃO - ${monthLabel.toUpperCase()}*\n`;
   text += `------------------------------------\n\n`;
 
-  sundays.forEach(sunday => {
+  sundays.forEach((sunday) => {
     text += `*DOMINGO ${sunday.formatted} (${sunday.label})*\n`;
-    
+
     // Manhã
     text += `\n*Turno Manhã (09h00):*\n`;
-    roles.forEach(role => {
-      const { main: volId, trainee: traineeId } = getSlotAssignment(schedule, sunday.date, 'MORNING', role.id);
-      const volName = volId ? (volunteersMap[volId]?.name || 'Não alocado') : 'Vago';
-      const traineeStr = traineeId ? ` _(Treino: ${volunteersMap[traineeId]?.name || traineeId})_` : '';
+    roles.forEach((role) => {
+      const { main: volId, trainee: traineeId } = getSlotAssignment(
+        schedule,
+        sunday.date,
+        'MORNING',
+        role.id
+      );
+      const volName = volId ? getVolunteerName(volId, 'Não alocado') : 'Vago';
+      const traineeStr = traineeId ? ` _(Treino: ${getVolunteerName(traineeId, traineeId)})_` : '';
       text += `- ${role.name}: *${volName}*${traineeStr}\n`;
     });
 
     // Noite
     text += `\n*Turno Noite (18h00):*\n`;
-    roles.forEach(role => {
+    roles.forEach((role) => {
       const { main: volId, trainee: traineeId } = getSlotAssignment(schedule, sunday.date, 'NIGHT', role.id);
-      const volName = volId ? (volunteersMap[volId]?.name || 'Não alocado') : 'Vago';
-      const traineeStr = traineeId ? ` _(Treino: ${volunteersMap[traineeId]?.name || traineeId})_` : '';
+      const volName = volId ? getVolunteerName(volId, 'Não alocado') : 'Vago';
+      const traineeStr = traineeId ? ` _(Treino: ${getVolunteerName(traineeId, traineeId)})_` : '';
       text += `- ${role.name}: *${volName}*${traineeStr}\n`;
     });
 

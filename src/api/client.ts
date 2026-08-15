@@ -512,6 +512,9 @@ export function createApiClient({
     async updateVolunteer(id, changes) {
       return normalizeVolunteer(await request(`/volunteers/${id}`, { method: 'PUT', body: changes }));
     },
+    async deleteVolunteer(id) {
+      return request(`/volunteers/${id}`, { method: 'DELETE' });
+    },
     async updateProficiencies(id, proficiencies) {
       try {
         return await request(`/volunteers/${id}/proficiencies`, {

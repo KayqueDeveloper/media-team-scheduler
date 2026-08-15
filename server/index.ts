@@ -65,6 +65,7 @@ import {
   getPendingRegistrationById,
   getPendingRegistrations,
   getUserById,
+  getAuthAccountByVolunteerId,
   getUserIdByVolunteerId,
   deleteUserById,
   markUserEmailConfirmed,
@@ -923,11 +924,30 @@ export function createApp({
 
   app.delete('/api/volunteers/:id', async (req, res) => {
     try {
-      const archived = await deleteVolunteer(Number(req.params.id));
-      if (!archived) return res.status(404).json({ error: 'Volunteer not found.' });
-      res.json(archived);
+      const volunteerId = Number(req.params.id);
+      if (!Number.isInteger(volunteerId) || volunteerId <= 0) {
+        return res.status(400).json({ error: 'Volunteer id inválido.' });
+      }
+      const volunteer = await getVolunteerById(volunteerId);
+      if (!volunteer) return res.status(404).json({ error: 'Volunteer not found.' });
+
+      const account = await getAuthAccountByVolunteerId(volunteerId);
+      const adminClient = app.locals.supabaseAdminClient || getSupabaseAdminClient();
+      if (account && !adminClient && (account.authUserId || isSupabaseAuthConfigured())) {
+        return res.status(503).json({
+          error: 'Supabase Admin não está configurado para excluir a conta do voluntário.',
+          code: 'SUPABASE_ADMIN_NOT_CONFIGURED'
+        });
+      }
+      if (account && adminClient) {
+        const authUser = await findSupabaseUserByEmail(account.email, adminClient);
+        if (authUser) await deleteSupabaseUser(authUser.id, adminClient);
+      }
+
+      await deleteVolunteer(volunteerId);
+      res.status(204).end();
     } catch (error) {
-      res.status(400).json({ error: error.message });
+      res.status(502).json({ error: error.message, code: 'VOLUNTEER_DELETION_FAILED' });
     }
   });
 

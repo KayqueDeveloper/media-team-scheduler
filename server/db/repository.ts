@@ -81,16 +81,53 @@ export async function updateVolunteer(id, volunteerData) {
   const allowedShift = volunteerData.allowedShift !== undefined ? volunteerData.allowedShift : (current.allowed_shift || 'ALL');
   const active = volunteerData.active !== undefined ? (volunteerData.active ? 1 : 0) : (current.active ? 1 : 0);
 
-  await db.run(`
-    UPDATE volunteers
-    SET name = ?, email = ?, phone = ?, max_monthly_frequency = ?, max_consecutive_sundays = ?, allowed_shift = ?, active = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `, [name, email, phone, maxMonthlyFrequency, maxConsecutiveSundays, allowedShift, active, id]);
+  await db.transaction(async tx => {
+    await tx.run(`
+      UPDATE volunteers
+      SET name = ?, email = ?, phone = ?, max_monthly_frequency = ?, max_consecutive_sundays = ?, allowed_shift = ?, active = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [name, email, phone, maxMonthlyFrequency, maxConsecutiveSundays, allowedShift, active, id]);
+    if (volunteerData.active !== undefined) {
+      await tx.run(`
+        UPDATE users SET active = ?, updated_at = CURRENT_TIMESTAMP WHERE volunteer_id = ?
+      `, [active, id]);
+    }
+  });
   return getVolunteerById(id);
 }
 
-export function deleteVolunteer(id) {
-  return updateVolunteer(id, { active: false });
+export async function deleteVolunteer(id) {
+  const db = database();
+  const volunteer = await getVolunteerById(id);
+  if (!volunteer) return null;
+
+  const deleted = await db.transaction(async tx => {
+    const versions = await tx.all('SELECT id, assignments FROM schedule_versions');
+    for (const version of versions) {
+      const assignments = parseJsonArray(version.assignments);
+      const remainingAssignments = assignments.filter(assignment =>
+        Number(assignment.volunteerId ?? assignment.volunteer_id) !== Number(id)
+      );
+      if (remainingAssignments.length !== assignments.length) {
+        await tx.run('UPDATE schedule_versions SET assignments = ? WHERE id = ?', [
+          JSON.stringify(remainingAssignments),
+          version.id
+        ]);
+      }
+    }
+
+    await tx.run(`
+      DELETE FROM schedule_change_events
+      WHERE previous_volunteer_id = ?
+         OR new_volunteer_id = ?
+         OR changed_by_user_id IN (SELECT id FROM users WHERE volunteer_id = ?)
+    `, [id, id, id]);
+    await tx.run('DELETE FROM users WHERE volunteer_id = ?', [id]);
+    const result = await tx.run('DELETE FROM volunteers WHERE id = ?', [id]);
+    return result.changes > 0;
+  });
+
+  return deleted ? volunteer : null;
 }
 
 async function setProficiencyOn(db, volunteerId, role, level) {

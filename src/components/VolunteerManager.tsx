@@ -14,7 +14,8 @@ import {
   Sun,
   Moon,
   Clock,
-  ChevronDown
+  ChevronDown,
+  Trash2
 } from 'lucide-react';
 import { Modal } from './Modal';
 
@@ -26,6 +27,7 @@ export const VolunteerManager = ({
   onUpdateVolunteer,
   onAddVolunteer,
   onToggleVolunteerStatus,
+  onDeleteVolunteer,
   disabled = false
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -171,6 +173,16 @@ export const VolunteerManager = ({
                   >
                     {vol.active ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
                     {vol.active ? 'Ativo' : 'Inativo'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    style={{ padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}
+                    onClick={() => onDeleteVolunteer(vol.id)}
+                    disabled={disabled}
+                    title="Excluir voluntário e todos os dados vinculados"
+                  >
+                    <Trash2 size={12} /> Excluir
                   </button>
                 </div>
               </div>

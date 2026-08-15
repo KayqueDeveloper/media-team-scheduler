@@ -141,6 +141,21 @@ test('usa o endpoint legado de proficiências somente quando o convencional não
   assert.deepEqual(proficiencies, { VMIX: 2 });
 });
 
+test('exclui definitivamente um voluntário pelo recurso administrativo', async () => {
+  let request;
+  const client = createApiClient({
+    fetchImpl: async (url, init) => {
+      request = { url, init };
+      return new Response(null, { status: 204 });
+    }
+  });
+
+  await client.deleteVolunteer('7');
+
+  assert.equal(request.url, '/api/volunteers/7');
+  assert.equal(request.init.method, 'DELETE');
+});
+
 test('expõe a mensagem retornada pela API em falhas', async () => {
   const client = createApiClient({
     fetchImpl: async () => jsonResponse({ error: 'Data de corte encerrada' }, { status: 400 })

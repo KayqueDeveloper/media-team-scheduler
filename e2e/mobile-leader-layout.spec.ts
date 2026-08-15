@@ -47,6 +47,15 @@ test.describe('layout mobile do painel do líder', () => {
     }));
     expect(previewSizes.scrollWidth).toBeLessThanOrEqual(previewSizes.clientWidth);
     await expect(page.locator('#pdf-printable-document')).not.toBeInViewport();
+
+    await expect(mobilePreview).toContainText('Maria Eduarda');
+    await expect(mobilePreview).toContainText('Treinando: Joana Clara');
+    await expect(mobilePreview).not.toContainText('Maria Eduarda de Souza');
+    await expect(mobilePreview).not.toContainText('Joana Clara Pereira');
+    await expect(page.locator('#pdf-printable-document')).toContainText('Maria Eduarda');
+    await expect(page.locator('#pdf-printable-document')).toContainText('(Treino: Joana Clara)');
+    await expect(page.locator('#pdf-printable-document')).not.toContainText('Maria Eduarda de Souza');
+    await expect(page.locator('#pdf-printable-document')).not.toContainText('Joana Clara Pereira');
   });
 
   test('mantém as ações acessíveis em um cabeçalho compacto', async ({ page }) => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  formatVolunteerDisplayName,
   formatScheduleDate,
   getCurrentBusinessMonth,
   getRoleLabel,
@@ -30,5 +31,11 @@ describe('catálogo da escala no frontend', () => {
     expect(formatScheduleDate('2026-08-16')).toBe('16/08/2026');
     expect(getShiftLabel('MORNING')).toBe('Manhã');
     expect(getRoleLabel('FIXED_CAM')).toBe('Câmera Fixa');
+  });
+
+  it('exibe somente os dois primeiros nomes do voluntário na escala publicada', () => {
+    expect(formatVolunteerDisplayName('  Maria   Eduarda de Souza  ')).toBe('Maria Eduarda');
+    expect(formatVolunteerDisplayName('João Pedro')).toBe('João Pedro');
+    expect(formatVolunteerDisplayName('Ana')).toBe('Ana');
   });
 });

@@ -45,12 +45,12 @@ async function runTests() {
   }
   console.log(`[PASS] Updated volunteer name to: ${updatedVol.name}`);
 
-  // Archive volunteer while preserving history
-  const archived = await repository.deleteVolunteer(newVol.id);
-  if (!archived || archived.active !== false || await repository.getVolunteerById(newVol.id) === null) {
-    throw new Error('Volunteer archival failed');
+  // Permanently delete volunteer and linked records
+  const deleted = await repository.deleteVolunteer(newVol.id);
+  if (!deleted || await repository.getVolunteerById(newVol.id) !== null) {
+    throw new Error('Volunteer deletion failed');
   }
-  console.log(`[PASS] Archived volunteer ID: ${newVol.id}`);
+  console.log(`[PASS] Permanently deleted volunteer ID: ${newVol.id}`);
 
   // 3. Verify Proficiencies
   console.log('\n--- Test 3: Proficiencies CRUD & Level Validation ---');

@@ -141,7 +141,7 @@ async function createHttpFixture(options = {}) {
     if (ownsDirectory) await rm(directory, { recursive: true, force: true });
   }
 
-  return { request, requestUnauthenticated, requestAs, loginAs, confirmEmail, hasAuthUser, cleanup };
+  return { app, request, requestUnauthenticated, requestAs, loginAs, confirmEmail, hasAuthUser, cleanup };
 }
 
 async function createPublishedConfirmationFixture({ now, emailSender }) {
@@ -1008,7 +1008,7 @@ test('HTTP API preserves administrative data after a server restart', async (t) 
   assert.deepEqual(volunteers.body[0].proficiencies, { VMIX: 2 });
 });
 
-test('HTTP API updates and archives a volunteer without deleting its history', async (t) => {
+test('HTTP API updates and inactivates a volunteer without deleting its history', async (t) => {
   const fixture = await createHttpFixture();
   t.after(fixture.cleanup);
 
@@ -1033,9 +1033,9 @@ test('HTTP API updates and archives a volunteer without deleting its history', a
   assert.equal(updated.body.name, 'Ana Atualizada');
   assert.equal(updated.body.allowedShift, 'ALL');
 
-  const archived = await fixture.request('DELETE', `/api/volunteers/${created.body.id}`);
-  assert.equal(archived.status, 200);
-  assert.equal(archived.body.active, false);
+  const inactivated = await fixture.request('PUT', `/api/volunteers/${created.body.id}`, { active: false });
+  assert.equal(inactivated.status, 200);
+  assert.equal(inactivated.body.active, false);
 
   const allVolunteers = await fixture.request('GET', '/api/volunteers');
   assert.equal(allVolunteers.status, 200);
@@ -1045,6 +1045,93 @@ test('HTTP API updates and archives a volunteer without deleting its history', a
   const activeVolunteers = await fixture.request('GET', '/api/volunteers?active=true');
   assert.equal(activeVolunteers.status, 200);
   assert.deepEqual(activeVolunteers.body, []);
+});
+
+test('leader permanently deletes a volunteer, its Auth account and every linked record', async (t) => {
+  const fixture = await createHttpFixture();
+  t.after(fixture.cleanup);
+
+  const input = {
+    name: 'Voluntária Excluída',
+    email: 'excluida@test.local',
+    phone: '(31) 99999-4321',
+    password: 'senha-segura'
+  };
+  assert.equal((await fixture.requestUnauthenticated('POST', '/api/auth/register', input)).status, 201);
+  fixture.confirmEmail(input.email);
+
+  const pending = await fixture.request('GET', '/api/admin/registrations');
+  const approved = await fixture.request(
+    'POST',
+    `/api/admin/registrations/${pending.body.registrations[0].id}/approve`
+  );
+  assert.equal(approved.status, 200);
+  const volunteerId = approved.body.volunteer.id;
+
+  const inactivated = await fixture.request('PUT', `/api/volunteers/${volunteerId}`, { active: false });
+  assert.equal(inactivated.status, 200);
+  assert.equal(inactivated.body.active, false);
+  assert.equal(fixture.hasAuthUser(input.email), true);
+
+  await fixture.loginAs(input.email);
+  const blocked = await fixture.request('GET', '/api/auth/me');
+  assert.equal(blocked.status, 403);
+  assert.equal(blocked.body.code, 'AUTH_PROFILE_DISABLED');
+
+  await fixture.loginAs('leader@test.local');
+  assert.equal((await fixture.request('PUT', `/api/volunteers/${volunteerId}`, { active: true })).status, 200);
+  await fixture.request('PUT', `/api/volunteers/${volunteerId}/proficiencies`, {
+    proficiencies: { VMIX: 2 }
+  });
+  const unavailability = await fixture.request('POST', '/api/unavailabilities', {
+    volunteerId,
+    date: '2026-07-05',
+    shift: 'ALL',
+    reason: 'Viagem'
+  });
+  assert.equal(unavailability.status, 201);
+
+  const generated = await fixture.request('POST', '/api/schedule/generate', { year: 2026, month: 7 });
+  const scheduleId = generated.body.schedule.id;
+  assert.equal((await fixture.request('PUT', `/api/schedule/${scheduleId}`, {
+    assignments: [{
+      date: '2026-07-12',
+      shift: 'MORNING',
+      role: 'VMIX',
+      volunteerId
+    }],
+    lockedSlots: []
+  })).status, 200);
+  assert.equal((await fixture.request('POST', `/api/schedule/${scheduleId}/publish`, {
+    confirmedWarnings: true
+  })).status, 200);
+
+  const deleted = await fixture.request('DELETE', `/api/volunteers/${volunteerId}`);
+  assert.equal(deleted.status, 204);
+  assert.equal(fixture.hasAuthUser(input.email), false);
+
+  const volunteers = await fixture.request('GET', '/api/volunteers');
+  assert.equal(volunteers.body.some(volunteer => volunteer.id === volunteerId), false);
+  const unavailable = await fixture.request('GET', `/api/unavailabilities?volunteerId=${volunteerId}`);
+  assert.deepEqual(unavailable.body, []);
+  const schedule = await fixture.request('GET', '/api/schedule?year=2026&month=7');
+  assert.equal(schedule.body.assignments.some(assignment => assignment.volunteer_id === volunteerId), false);
+  const versions = await fixture.request('GET', `/api/schedule/${scheduleId}/versions`);
+  assert.equal(versions.body.every(version =>
+    version.assignments.every(assignment => assignment.volunteer_id !== volunteerId)
+  ), true);
+
+  const linkedCounts = await Promise.all([
+    ['proficiencies', 'volunteer_id'],
+    ['unavailabilities', 'volunteer_id'],
+    ['assignments', 'volunteer_id'],
+    ['users', 'volunteer_id'],
+    ['service_confirmations', 'volunteer_id']
+  ].map(([table, column]) => fixture.app.locals.db.one(
+    `SELECT COUNT(*) AS total FROM ${table} WHERE ${column} = ?`,
+    [volunteerId]
+  )));
+  assert.deepEqual(linkedCounts.map(row => Number(row.total)), [0, 0, 0, 0, 0]);
 });
 
 test('HTTP API replaces and removes proficiencies through volunteer resources', async (t) => {

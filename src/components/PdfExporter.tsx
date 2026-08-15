@@ -1,6 +1,7 @@
 // @ts-nocheck -- Legacy compatibility module; migrate types incrementally at typed boundaries.
 import React, { useState } from 'react';
 import { Download, MessageCircle, Printer } from 'lucide-react';
+import { formatVolunteerDisplayName } from '../domain/catalog';
 import { exportToPdf, shareToWhatsApp } from '../utils/pdfExport';
 import { getSlotAssignment } from '../utils/scheduleUtils';
 import '../styles/print.css';
@@ -43,6 +44,10 @@ export const PdfExporter = ({
     }),
     [volunteersMap, selectedSnapshot]
   );
+  const getVolunteerDisplayName = (volunteerId, fallback) => {
+    const name = displayVolunteersMap[volunteerId]?.name;
+    return name ? formatVolunteerDisplayName(name) : fallback;
+  };
 
   const handleDownloadPdf = async () => {
     setIsExporting(true);
@@ -144,9 +149,9 @@ export const PdfExporter = ({
                       role.id
                     );
                     const volunteerName = volunteerId
-                      ? displayVolunteersMap[volunteerId]?.name || 'Não alocado'
+                      ? getVolunteerDisplayName(volunteerId, 'Não alocado')
                       : 'Vago';
-                    const traineeName = traineeId ? displayVolunteersMap[traineeId]?.name : '';
+                    const traineeName = traineeId ? getVolunteerDisplayName(traineeId, '') : '';
                     return (
                       <div className="pdf-mobile-assignment" key={role.id}>
                         <span>{role.name}</span>
@@ -197,8 +202,8 @@ export const PdfExporter = ({
                         'MORNING',
                         role.id
                       );
-                      const volName = volId ? displayVolunteersMap[volId]?.name || 'Não alocado' : '';
-                      const traineeName = traineeId ? displayVolunteersMap[traineeId]?.name : null;
+                      const volName = volId ? getVolunteerDisplayName(volId, 'Não alocado') : '';
+                      const traineeName = traineeId ? getVolunteerDisplayName(traineeId, '') : null;
                       return (
                         <td key={role.id} className="td-volunteer-cell">
                           <div>{volName}</div>
@@ -229,8 +234,8 @@ export const PdfExporter = ({
                         'NIGHT',
                         role.id
                       );
-                      const volName = volId ? displayVolunteersMap[volId]?.name || 'Não alocado' : '';
-                      const traineeName = traineeId ? displayVolunteersMap[traineeId]?.name : null;
+                      const volName = volId ? getVolunteerDisplayName(volId, 'Não alocado') : '';
+                      const traineeName = traineeId ? getVolunteerDisplayName(traineeId, '') : null;
                       return (
                         <td key={role.id} className="td-volunteer-cell">
                           <div>{volName}</div>

@@ -56,6 +56,10 @@ export function formatScheduleDate(date: string): string {
   return `${day}/${month}/${year}`;
 }
 
+export function formatVolunteerDisplayName(name: string): string {
+  return name.trim().split(/\s+/).slice(0, 2).join(' ');
+}
+
 export const MONTH_NAMES = [
   'Janeiro',
   'Fevereiro',

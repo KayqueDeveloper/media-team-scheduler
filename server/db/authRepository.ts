@@ -270,6 +270,20 @@ export async function getUserIdByVolunteerId(volunteerId) {
   );
 }
 
+export async function getAuthAccountByVolunteerId(volunteerId) {
+  const user = await getDatabase().one(`
+    SELECT id, auth_user_id, email
+    FROM users
+    WHERE volunteer_id = ?
+  `, [volunteerId]);
+  if (!user) return null;
+  return {
+    id: user.id,
+    authUserId: user.auth_user_id || null,
+    email: user.email
+  };
+}
+
 export async function getLeaderUserIds() {
   const rows = await getDatabase().all("SELECT id FROM users WHERE role = 'LEADER' AND active = 1");
   return rows.map((user) => user.id);

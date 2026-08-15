@@ -483,6 +483,35 @@ export function App() {
     });
   }
 
+  async function handleDeleteVolunteer(volunteerId) {
+    const volunteer = volunteers.find(item => String(item.id) === String(volunteerId));
+    if (!volunteer) return false;
+    const confirmed = window.confirm(
+      `Excluir ${volunteer.name} definitivamente?\n\nA conta de acesso e todos os dados vinculados serão apagados. Esta ação não pode ser desfeita.`
+    );
+    if (!confirmed) return false;
+
+    return runMutation('deleting-volunteer', async () => {
+      await api.deleteVolunteer(volunteerId);
+      const [monthData, exchanges, confirmations] = await Promise.all([
+        api.loadMonth(year, month),
+        api.getAdminExchanges(),
+        api.getAdminServiceConfirmations(year, month)
+      ]);
+      setVolunteers(monthData.volunteers);
+      setUnavailabilities(monthData.unavailabilities);
+      setScheduleState({
+        ...initialScheduleState,
+        ...monthData.schedule,
+        matrix: ensureScheduleSlots(monthData.schedule.matrix, sundays, SHIFTS, ROLES)
+      });
+      setPublishedVersions(monthData.versions || []);
+      setAdminExchanges(exchanges);
+      setServiceConfirmations(confirmations);
+      notify('success', 'Voluntário e todos os dados vinculados foram excluídos definitivamente.');
+    });
+  }
+
   async function handleUpdatePendingRegistration(id, changes) {
     return runMutation('updating-registration', async () => {
       const updated = await api.updatePendingRegistration(id, changes);
@@ -591,6 +620,7 @@ export function App() {
                 onUpdateVolunteer={handleUpdateVolunteer}
                 onAddVolunteer={handleAddVolunteer}
                 onToggleVolunteerStatus={handleToggleVolunteerStatus}
+                onDeleteVolunteer={handleDeleteVolunteer}
                 disabled={isBusy}
               />
             )}

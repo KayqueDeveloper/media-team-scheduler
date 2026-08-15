@@ -24,7 +24,7 @@ const sunday = { date: '2026-08-02', formatted: '02/08/2026', label: '1º Doming
 const emptyShift = Object.fromEntries(ROLES.map((role) => [role.id, { main: '', trainee: '' }]));
 const morningShift = {
   ...emptyShift,
-  FREEHAND: { main: '1', trainee: '' }
+  FREEHAND: { main: '1', trainee: '2' }
 };
 const fixtureSchedule = { [sunday.date]: { MORNING: morningShift, NIGHT: emptyShift } };
 
@@ -47,17 +47,33 @@ function ScheduleFixture() {
 }
 
 function PdfFixture() {
+  const pdfVolunteers = volunteers.map((volunteer) =>
+    volunteer.id === '1'
+      ? { ...volunteer, name: 'Nome Atual Diferente' }
+      : volunteer.id === '2'
+        ? { ...volunteer, name: 'Outro Nome Atual' }
+        : volunteer
+  );
+  const publishedVersion = {
+    version: 1,
+    matrix: fixtureSchedule,
+    volunteerNames: {
+      1: { name: 'Maria Eduarda de Souza' },
+      2: { name: 'Joana Clara Pereira' }
+    }
+  };
+
   return (
     <PdfExporter
       schedule={fixtureSchedule}
-      volunteers={volunteers}
+      volunteers={pdfVolunteers}
       sundays={[sunday]}
       shifts={SHIFTS}
       roles={ROLES}
       monthLabel="Agosto 2026"
       status="published"
       version={1}
-      versions={[]}
+      versions={[publishedVersion]}
     />
   );
 }
